@@ -1,0 +1,2 @@
+to start the server: uvicorn app.main:app --reload --port 8000
+for frontend : npm run dev 

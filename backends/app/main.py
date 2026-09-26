@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
+from app.api.bsp import router as bsp_router
 from app.api.inventory import router as inventory_router
 from app.api.agent import router as agent_router
 from app.api.sap import router as sap_router
@@ -41,7 +41,10 @@ app.include_router(
     prefix="/inventory",
     tags=["Inventory"],
 )
-
+app.include_router(
+    bsp_router,
+    tags=["BSP Automation"],
+)
 
 # =========================================================
 # AGENT ROUTER

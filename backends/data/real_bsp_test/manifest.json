@@ -1,0 +1,34 @@
+{
+  "run_id": "real-bsp-test",
+  "status": "waiting_for_sap",
+  "run_directory": "data\\real_bsp_test",
+  "completed_steps": [
+    "Prepare MC.1 Inventory Files",
+    "Build BSP Inventory Workbook",
+    "Update mminv_new and Prepare ZMAT Batches"
+  ],
+  "artifacts": {
+    "bsp_workbook_file": "data\\real_bsp_test\\output\\BSP_Inventory.xlsx",
+    "mminv_new": {
+      "success": true,
+      "table": "mminv_new",
+      "input_rows": 566865,
+      "database_rows": 566865
+    },
+    "batches": {
+      "unique_material_codes": 142154,
+      "batch_size": 20000,
+      "batch_count": 8,
+      "files": [
+        "data\\real_bsp_test\\zmat_batches\\zmat_batch_001.txt",
+        "data\\real_bsp_test\\zmat_batches\\zmat_batch_002.txt",
+        "data\\real_bsp_test\\zmat_batches\\zmat_batch_003.txt",
+        "data\\real_bsp_test\\zmat_batches\\zmat_batch_004.txt",
+        "data\\real_bsp_test\\zmat_batches\\zmat_batch_005.txt",
+        "data\\real_bsp_test\\zmat_batches\\zmat_batch_006.txt",
+        "data\\real_bsp_test\\zmat_batches\\zmat_batch_007.txt",
+        "data\\real_bsp_test\\zmat_batches\\zmat_batch_008.txt"
+      ]
+    }
+  }
+}

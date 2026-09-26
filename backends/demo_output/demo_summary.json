@@ -1,0 +1,205 @@
+{
+  "success": true,
+  "raw_previous": "C:\\Jayant\\College files\\College\\Study Material\\semester\\7thSem\\BSP-training\\SapAi\\backends\\demo_output\\raw\\MC1_Previous_Raw.xlsx",
+  "raw_current": "C:\\Jayant\\College files\\College\\Study Material\\semester\\7thSem\\BSP-training\\SapAi\\backends\\demo_output\\raw\\MC1_Current_Raw.xlsx",
+  "bsp_workbook": "C:\\Jayant\\College files\\College\\Study Material\\semester\\7thSem\\BSP-training\\SapAi\\backends\\demo_output\\BSP_Inventory.xlsx",
+  "mminv_new_rows": 6,
+  "unique_material_codes": 6,
+  "zmat_batch_count": 1,
+  "zmat_demo_preparation": {
+    "success": true,
+    "batches": [
+      {
+        "success": true,
+        "batch_number": 1,
+        "job_name": "ZMAT_PO_PR",
+        "submit_background": true,
+        "zmat": {
+          "success": true,
+          "transaction": "ZMAT-FUND_POPR",
+          "batch_number": 1,
+          "material_count": 6,
+          "material_codes": [
+            "15111201000046",
+            "15111301000109",
+            "15211401000020",
+            "15311501000031",
+            "15411601000042",
+            "15511701000053"
+          ],
+          "submit_background": true,
+          "control_ids": {
+            "material_input": "txt_MATERIAL",
+            "execute": "btn_EXECUTE",
+            "background": "btn_BACKGROUND"
+          },
+          "operations": [
+            {
+              "step": "connect",
+              "result": {
+                "success": true,
+                "session": {
+                  "system": "MOCK_SAP",
+                  "client": "000",
+                  "user": "MOCK_USER",
+                  "transaction": null,
+                  "program": "MOCK_PROGRAM",
+                  "connection_index": 0,
+                  "session_index": 0
+                }
+              }
+            },
+            {
+              "step": "start_transaction",
+              "result": {
+                "success": true,
+                "transaction": "ZMAT-FUND_POPR",
+                "message": "Mock SAP transaction ZMAT-FUND_POPR started."
+              }
+            },
+            {
+              "step": "material_input",
+              "control_id": "txt_MATERIAL",
+              "material_count": 6,
+              "result": {
+                "success": true,
+                "control_id": "txt_MATERIAL",
+                "value": "15111201000046\n15111301000109\n15211401000020\n15311501000031\n15411601000042\n15511701000053"
+              }
+            },
+            {
+              "step": "execute",
+              "control_id": "btn_EXECUTE",
+              "result": {
+                "success": true,
+                "control_id": "btn_EXECUTE",
+                "message": "Mock control btn_EXECUTE pressed."
+              }
+            },
+            {
+              "step": "background_submission",
+              "control_id": "btn_BACKGROUND",
+              "result": {
+                "success": true,
+                "control_id": "btn_BACKGROUND",
+                "message": "Mock control btn_BACKGROUND pressed."
+              }
+            }
+          ],
+          "background_submitted": true
+        },
+        "sm37": {
+          "success": true,
+          "transaction": "SM37",
+          "job_name": "ZMAT_PO_PR",
+          "open": {
+            "success": true,
+            "transaction": "SM37",
+            "control_ids": {
+              "job_name": "txt_JOB_NAME",
+              "execute": "btn_EXECUTE",
+              "status": "txt_JOB_STATUS",
+              "job_number": "txt_JOB_NUMBER"
+            },
+            "operations": [
+              {
+                "step": "connect",
+                "result": {
+                  "success": true,
+                  "session": {
+                    "system": "MOCK_SAP",
+                    "client": "000",
+                    "user": "MOCK_USER",
+                    "transaction": null,
+                    "program": "MOCK_PROGRAM",
+                    "connection_index": 0,
+                    "session_index": 0
+                  }
+                }
+              },
+              {
+                "step": "start_transaction",
+                "result": {
+                  "success": true,
+                  "transaction": "SM37",
+                  "message": "Mock SAP transaction SM37 started."
+                }
+              }
+            ]
+          },
+          "search": {
+            "success": true,
+            "job_name": "ZMAT_PO_PR",
+            "operations": [
+              {
+                "step": "job_name",
+                "control_id": "txt_JOB_NAME",
+                "result": {
+                  "success": true,
+                  "control_id": "txt_JOB_NAME",
+                  "value": "ZMAT_PO_PR"
+                }
+              },
+              {
+                "step": "execute_search",
+                "control_id": "btn_EXECUTE",
+                "result": {
+                  "success": true,
+                  "control_id": "btn_EXECUTE",
+                  "message": "Mock control btn_EXECUTE pressed."
+                }
+              }
+            ]
+          },
+          "monitoring": {
+            "success": true,
+            "status": "FINISHED",
+            "job_number": "DEMO-0001",
+            "elapsed_seconds": 4.499997885432094e-06,
+            "status_history": [
+              "FINISHED"
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "inventory_po": "C:\\Jayant\\College files\\College\\Study Material\\semester\\7thSem\\BSP-training\\SapAi\\backends\\demo_output\\Inventory PO.xlsx",
+  "inventory_po_rows": null,
+  "mminv1_new": {
+    "success": true,
+    "table_name": "mminv1_new",
+    "sheet_name": "Inventory PO",
+    "inventory_po_file": "C:\\Jayant\\College files\\College\\Study Material\\semester\\7thSem\\BSP-training\\SapAi\\backends\\demo_output\\Inventory PO.xlsx",
+    "rows_imported": 5,
+    "message": "Inventory PO successfully imported into mminv1_new.",
+    "pipeline": {
+      "success": true,
+      "input_file": "C:\\Jayant\\College files\\College\\Study Material\\semester\\7thSem\\BSP-training\\SapAi\\backends\\demo_output\\Inventory PO.xlsx",
+      "table": "mminv1_new",
+      "input_rows": 5,
+      "validation": {
+        "valid": true,
+        "rows": 5,
+        "columns": [
+          "Material Code",
+          "Quantity",
+          "Date"
+        ],
+        "errors": []
+      },
+      "database": {
+        "success": true,
+        "table": "mminv1_new",
+        "expected_rows": 5,
+        "imported_rows": 5,
+        "columns": [
+          "Material Code",
+          "Quantity",
+          "Date"
+        ]
+      },
+      "error": null
+    }
+  }
+}

@@ -68,7 +68,7 @@ class SAPGUIClient:
             )
 
             self.application = (
-                self.sap_gui.GetScriptingEngine()
+                self.sap_gui.GetScriptingEngine
             )
 
         except Exception as exc:

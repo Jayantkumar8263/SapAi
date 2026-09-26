@@ -446,7 +446,18 @@ def build_inventory_po(
             date_columns,
         )
     )
-
+        # --------------------------------------------------------
+    # NORMALIZE INVENTORY PO COLUMN NAMES
+    # --------------------------------------------------------
+    # The final mminv1_new database stage requires
+    # the material identifier to be named "Material Code".
+    if "Material" in combined.columns and "Material Code" not in combined.columns:
+        combined = combined.rename(
+            columns={
+                "Material": "Material Code"
+            }
+        )
+        
     output_path = Path(
         output_file
     )

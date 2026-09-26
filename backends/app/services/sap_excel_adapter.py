@@ -195,28 +195,20 @@ def load_sap_mc1_raw(
     file_path: str | Path,
 ) -> pd.DataFrame:
     """
-    Load MC.1 Excel data.
+    Load MC.1 data.
 
-    Supported:
+    Sheet1 is always preferred when it contains raw MC.1 data.
 
-        Sheet1 only
-        Sheet1 + Sheet2
-        Sheet2 only
+    This prevents an old/stale Sheet2 from silently becoming
+    the source of truth.
     """
 
-    file_path = Path(
-        file_path
-    )
+    file_path = Path(file_path)
 
     if not file_path.exists():
-
         raise FileNotFoundError(
             f"SAP Excel file not found: {file_path}"
         )
-
-    # ------------------------------------------------------------
-    # Open Excel explicitly so Windows file handles are closed.
-    # ------------------------------------------------------------
 
     with pd.ExcelFile(
         file_path,
@@ -227,100 +219,31 @@ def load_sap_mc1_raw(
             excel_file.sheet_names
         )
 
-        # --------------------------------------------------------
-        # CASE 1
-        # Sheet2 exists
-        # --------------------------------------------------------
-
-        if "Sheet2" in sheet_names:
-
-            df = _read_sheet(
-                excel_file,
-                "Sheet2",
+        if not sheet_names:
+            raise ValueError(
+                "SAP MC.1 workbook contains no worksheets."
             )
 
-        # --------------------------------------------------------
-        # CASE 2
-        # Multiple sheets but Sheet2 has another name
-        # --------------------------------------------------------
-
-        elif len(sheet_names) > 1:
-
-            candidate = _read_sheet(
+        def read_and_normalize(
+            sheet_name,
+        ):
+            return _read_sheet(
                 excel_file,
-                1,
+                sheet_name,
             )
 
-            if _is_cleaned_mc1(
-                candidate
-            ):
+        # =====================================================
+        # SHEET1 RAW DATA
+        # =====================================================
 
-                df = candidate
+        if "Sheet1" in sheet_names:
 
-            else:
-
-                first = _read_sheet(
-                    excel_file,
-                    0,
-                )
-
-                if _is_raw_mc1(
-                    first
-                ):
-
-                    # Convert raw column spelling into the
-                    # exact spelling expected by the cleaner.
-                    first = first.rename(
-                        columns={
-                            "Storage location":
-                            "Storage Location"
-                        }
-                    )
-
-                    from app.services.bsp_mc1_export import (
-                        clean_mc1_sheet1
-                    )
-
-                    df = clean_mc1_sheet1(
-                        first
-                    )
-
-                else:
-
-                    df = candidate
-
-        # --------------------------------------------------------
-        # CASE 3
-        # Only one worksheet
-        # --------------------------------------------------------
-
-        else:
-
-            first = _read_sheet(
-                excel_file,
-                0,
+            first = read_and_normalize(
+                "Sheet1"
             )
 
-            # ----------------------------------------------------
-            # Already cleaned
-            # ----------------------------------------------------
+            if _is_raw_mc1(first):
 
-            if _is_cleaned_mc1(
-                first
-            ):
-
-                df = first
-
-            # ----------------------------------------------------
-            # Raw MC.1
-            # ----------------------------------------------------
-
-            elif _is_raw_mc1(
-                first
-            ):
-
-                # The existing BSP cleaner expects
-                # "Storage Location" with capital L.
                 first = first.rename(
                     columns={
                         "Storage location":
@@ -329,40 +252,74 @@ def load_sap_mc1_raw(
                 )
 
                 from app.services.bsp_mc1_export import (
-                    clean_mc1_sheet1
+                    clean_mc1_sheet1,
                 )
 
                 df = clean_mc1_sheet1(
                     first
                 )
 
-            # ----------------------------------------------------
-            # Unknown structure
-            # ----------------------------------------------------
+            elif _is_cleaned_mc1(first):
+
+                df = first
 
             else:
 
-                raise ValueError(
-                    "SAP MC.1 workbook does not contain "
-                    "either the expected raw MC.1 columns "
-                    "or the cleaned Sheet2 columns. "
-                    f"Found sheets: {sheet_names}; "
-                    f"columns: {first.columns.tolist()}"
+                df = None
+
+        else:
+
+            df = None
+
+        # =====================================================
+        # FALLBACK TO CLEANED SHEET
+        # =====================================================
+
+        if df is None:
+
+            for sheet_name in sheet_names:
+
+                candidate = (
+                    read_and_normalize(
+                        sheet_name
+                    )
                 )
 
-    # ============================================================
-    # Normalize cleaned output
-    # ============================================================
+                if _is_cleaned_mc1(
+                    candidate
+                ):
 
-    df = _normalize_columns(
-        df
-    )
+                    df = candidate
+                    break
 
-    # The cleaner normally creates "Storage Location".
-    # Normalize it to the adapter's standard spelling.
+        # =====================================================
+        # NOTHING FOUND
+        # =====================================================
+
+        if df is None:
+
+            first = read_and_normalize(
+                sheet_names[0]
+            )
+
+            raise ValueError(
+                "SAP MC.1 workbook does not contain "
+                "either the expected raw MC.1 columns "
+                "or the cleaned MC.1 columns. "
+                f"Found sheets: {sheet_names}; "
+                f"columns: {first.columns.tolist()}"
+            )
+
+    # =====================================================
+    # FINAL NORMALIZATION
+    # =====================================================
+
+    df = _normalize_columns(df)
+
     if (
         "Storage Location" in df.columns
-        and "Storage location" not in df.columns
+        and
+        "Storage location" not in df.columns
     ):
 
         df = df.rename(
@@ -371,10 +328,6 @@ def load_sap_mc1_raw(
                 "Storage location"
             }
         )
-
-    # ============================================================
-    # Validate final required columns
-    # ============================================================
 
     missing = [
         column
@@ -385,12 +338,12 @@ def load_sap_mc1_raw(
     if missing:
 
         raise ValueError(
-            "SAP MC.1 export is missing required columns: "
+            "SAP MC.1 export is missing required "
+            "columns: "
             + ", ".join(missing)
         )
 
     return df
-
 
 # ================================================================
 # ADAPT DATAFRAME

@@ -284,14 +284,13 @@ def analyze_inventory_changes(
     # --------------------------------------------------------
 
     if status_col is not None:
-
         status_series = (
-            df[status_col]
-            .fillna("")
-            .astype(str)
-            .str.strip()
-            .str.lower()
-        )
+        df[status_col]
+        .astype("string")
+        .fillna("")
+        .str.strip()
+        .str.lower()
+)
 
     else:
 

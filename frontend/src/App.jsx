@@ -1,100 +1,159 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   Activity,
+  ArrowUpDown,
   BarChart3,
   CheckCircle2,
   CircleAlert,
+  Download,
   FileSpreadsheet,
+  Filter,
   Home,
   Loader2,
   Play,
   RefreshCw,
+  Search,
   Settings,
   ShieldCheck,
   TrendingUp,
   Upload,
   XCircle,
-  Download,
-  Search,
-  Filter,
-  ArrowUpDown,
 } from "lucide-react";
 
 import "./App.css";
 
 
-// =========================================================
+// ============================================================
 // API CONFIGURATION
-// =========================================================
+// ============================================================
 
 const API_BASE_URL =
   import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
 
-// =========================================================
-// WORKFLOW STEPS
-// =========================================================
+// ============================================================
+// WORKFLOW
+// ============================================================
 
 const WORKFLOW_STEPS = [
-  "Process Previous Inventory",
-  "Process Current Inventory",
-  "Compare Previous and Current Inventory",
-  "Analyze Inventory Changes",
-  "Classify RI / Capital Materials",
-  "Generate Inventory Report",
-  "Validate Generated Report",
+  "Process MC.1 Raw Data",
+  "Build BSP Inventory Workbook",
+  "Update mminv_new",
+  "Run ZMAT-FUND_POPR",
+  "Extract Spool and Build Inventory PO",
+  "Update mminv1_new",
 ];
 
 
-// =========================================================
+// ============================================================
+// HELPERS
+// ============================================================
+
+function getErrorMessage(error) {
+  if (!error) {
+    return "Unknown error.";
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return (
+    error.message ||
+    error.detail ||
+    error.error ||
+    "Something went wrong."
+  );
+}
+
+
+function formatNumber(value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return "0";
+  }
+
+  return number.toLocaleString();
+}
+
+
+function normalizeStatus(status) {
+  return String(status || "")
+    .trim()
+    .toLowerCase();
+}
+
+
+function getNestedValue(object, paths, fallback = null) {
+  for (const path of paths) {
+    const parts = path.split(".");
+
+    let value = object;
+
+    for (const part of parts) {
+      if (
+        value === null ||
+        value === undefined
+      ) {
+        break;
+      }
+
+      value = value[part];
+    }
+
+    if (
+      value !== undefined &&
+      value !== null
+    ) {
+      return value;
+    }
+  }
+
+  return fallback;
+}
+
+
+// ============================================================
 // MAIN APP
-// =========================================================
+// ============================================================
 
 function App() {
 
-  // =======================================================
-  // PAGE STATE
-  // =======================================================
+  // ==========================================================
+  // PAGE
+  // ==========================================================
 
-  const [activePage, setActivePage] = useState("dashboard");
+  const [activePage, setActivePage] =
+    useState("dashboard");
 
 
-  // =======================================================
-  // BACKEND STATE
-  // =======================================================
+  // ==========================================================
+  // BACKEND
+  // ==========================================================
 
   const [backendStatus, setBackendStatus] =
     useState("checking");
 
+  const [backendError, setBackendError] =
+    useState("");
 
-  // =======================================================
-  // AUTOMATION STATE
-  // =======================================================
 
-  const [running, setRunning] = useState(false);
+  // ==========================================================
+  // FILES
+  // ==========================================================
 
-  const [runningStep, setRunningStep] =
-    useState(-1);
+  const [previousFile, setPreviousFile] =
+    useState(null);
 
-  const [workflowResult, setWorkflowResult] =
+  const [currentFile, setCurrentFile] =
     useState(null);
 
 
-  // =======================================================
-  // UI STATE
-  // =======================================================
-
-  const [error, setError] = useState("");
-  const [notification, setNotification] = useState("");
-
-  const [resultSearch, setResultSearch] = useState("");
-  const [resultFilter, setResultFilter] = useState("All");
-  const [resultSort, setResultSort] = useState("none");
-
-  // =======================================================
-  // AUTOMATION CONFIGURATION
-  // =======================================================
+  // ==========================================================
+  // CONFIG
+  // ==========================================================
 
   const [previousPeriod, setPreviousPeriod] =
     useState("Previous Month");
@@ -103,34 +162,88 @@ function App() {
     useState("Current Month");
 
   const [selectedPlant, setSelectedPlant] =
-    useState("BSP");
+    useState("1000");
 
   const [storageLocation, setStorageLocation] =
     useState("All");
 
-  // =======================================================
-  // INVENTORY FILE UPLOADS
-  // =======================================================
 
-  const [previousFile, setPreviousFile] =
-    useState(null);
+  // ==========================================================
+  // RUN STATE
+  // ==========================================================
 
-  const [currentFile, setCurrentFile] =
-    useState(null);
-
-  const [uploadingFiles, setUploadingFiles] =
+  const [running, setRunning] =
     useState(false);
 
+  const [runningStep, setRunningStep] =
+    useState(-1);
 
-  // =========================================================
+  const [runId, setRunId] =
+    useState(null);
+
+  const [workflowResult, setWorkflowResult] =
+    useState(null);
+
+
+  // ==========================================================
+  // UI
+  // ==========================================================
+
+  const [error, setError] =
+    useState("");
+
+  const [notification, setNotification] =
+    useState("");
+
+  const [uploadProgress, setUploadProgress] =
+    useState(0);
+
+
+  // ==========================================================
+  // RESULTS
+  // ==========================================================
+
+  const [resultSearch, setResultSearch] =
+    useState("");
+
+  const [resultFilter, setResultFilter] =
+    useState("All");
+
+  const [resultSort, setResultSort] =
+    useState("none");
+
+
+  // ==========================================================
+  // POLLING REF
+  // ==========================================================
+
+  const pollTimerRef =
+    useRef(null);
+
+
+  // ==========================================================
+  // CLEANUP
+  // ==========================================================
+
+  useEffect(() => {
+    return () => {
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+      }
+    };
+  }, []);
+
+
+  // ==========================================================
   // BACKEND HEALTH
-  // =========================================================
+  // ==========================================================
 
   const checkBackend = async () => {
 
-    try {
+    setBackendStatus("checking");
+    setBackendError("");
 
-      setBackendStatus("checking");
+    try {
 
       const response = await fetch(
         `${API_BASE_URL}/health`,
@@ -160,13 +273,17 @@ function App() {
       );
 
       setBackendStatus("offline");
+
+      setBackendError(
+        getErrorMessage(err)
+      );
     }
   };
 
 
-  // =========================================================
-  // INITIAL BACKEND CHECK
-  // =========================================================
+  // ==========================================================
+  // INITIAL HEALTH CHECK
+  // ==========================================================
 
   useEffect(() => {
 
@@ -184,30 +301,35 @@ function App() {
   }, []);
 
 
-  // =========================================================
-  // API RESPONSE HELPER
-  // =========================================================
+  // ==========================================================
+  // RESPONSE PARSER
+  // ==========================================================
 
   const parseResponse = async (response) => {
 
     const contentType =
-      response.headers.get("content-type") || "";
+      response.headers.get(
+        "content-type"
+      ) || "";
 
 
-    if (contentType.includes("application/json")) {
+    if (
+      contentType.includes(
+        "application/json"
+      )
+    ) {
 
       try {
-
         return await response.json();
-
       } catch {
-
         return {};
       }
     }
 
 
-    const text = await response.text();
+    const text =
+      await response.text();
+
 
     return {
       detail: text,
@@ -215,60 +337,286 @@ function App() {
   };
 
 
-  // =========================================================
-  // UPLOAD INVENTORY FILES
-  // =========================================================
+  // ==========================================================
+  // VALIDATE FILE
+  // ==========================================================
 
-  const uploadInventoryFiles = async () => {
+  const validateExcelFile = (
+    file,
+    label
+  ) => {
 
-    if (!previousFile) {
+    if (!file) {
       throw new Error(
-        "Please select the previous inventory Excel file."
+        `${label} file is required.`
       );
     }
 
-    if (!currentFile) {
+
+    const validExtensions = [
+      ".xlsx",
+      ".xls",
+    ];
+
+
+    const name =
+      file.name.toLowerCase();
+
+
+    const valid =
+      validExtensions.some(
+        (extension) =>
+          name.endsWith(extension)
+      );
+
+
+    if (!valid) {
       throw new Error(
-        "Please select the current inventory Excel file."
+        `${label} must be an Excel file (.xlsx or .xls).`
       );
     }
 
-    const formData = new FormData();
 
-    formData.append("previous_file", previousFile);
-    formData.append("current_file", currentFile);
+    return true;
+  };
 
-    setUploadingFiles(true);
+
+  // ==========================================================
+  // RESET RUN
+  // ==========================================================
+
+  const resetRun = () => {
+
+    if (pollTimerRef.current) {
+      clearTimeout(
+        pollTimerRef.current
+      );
+    }
+
+    setRunning(false);
+    setRunningStep(-1);
+    setRunId(null);
+    setWorkflowResult(null);
+    setUploadProgress(0);
+    setError("");
+    setNotification("");
+  };
+
+
+  // ==========================================================
+  // GET CURRENT STEP
+  // ==========================================================
+
+  const getStepIndex = (
+    currentStep
+  ) => {
+
+    if (!currentStep) {
+      return -1;
+    }
+
+
+    const text =
+      String(currentStep)
+        .toLowerCase();
+
+
+    const index =
+      WORKFLOW_STEPS.findIndex(
+        (step) =>
+          step
+            .toLowerCase()
+            .includes(text) ||
+          text.includes(
+            step.toLowerCase()
+          )
+      );
+
+
+    return index;
+  };
+
+
+  // ==========================================================
+  // POLL BSP STATUS
+  // ==========================================================
+
+  const pollBspStatus = async (
+    currentRunId
+  ) => {
 
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/inventory/upload`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
 
-      const data = await parseResponse(response);
+      const response =
+        await fetch(
+          `${API_BASE_URL}/bsp/status/${currentRunId}`,
+          {
+            method: "GET",
+            headers: {
+              Accept:
+                "application/json",
+            },
+          }
+        );
+
+
+      const data =
+        await parseResponse(
+          response
+        );
+
 
       if (!response.ok) {
         throw new Error(
           data?.detail ||
           data?.message ||
-          "Inventory file upload failed."
+          `Unable to read BSP status. HTTP ${response.status}`
         );
       }
 
-      return data;
-    } finally {
-      setUploadingFiles(false);
+
+      setWorkflowResult(data);
+
+
+      const currentStep =
+        getNestedValue(
+          data,
+          [
+            "current_step",
+            "currentStep",
+            "step",
+            "current_stage",
+            "currentStage",
+          ],
+          ""
+        );
+
+
+      const index =
+        getStepIndex(
+          currentStep
+        );
+
+
+      if (index >= 0) {
+        setRunningStep(index);
+      }
+
+
+      const status =
+        normalizeStatus(
+          data?.status
+        );
+
+
+      // --------------------------------------------------------
+      // SUCCESS
+      // --------------------------------------------------------
+
+      if (
+        [
+          "completed",
+          "complete",
+          "success",
+          "successful",
+          "done",
+        ].includes(status)
+      ) {
+
+        setRunningStep(
+          WORKFLOW_STEPS.length
+        );
+
+        setRunning(false);
+
+        setNotification(
+          "Inventory automation completed successfully."
+        );
+
+        setActivePage(
+          "results"
+        );
+
+        return;
+      }
+
+
+      // --------------------------------------------------------
+      // FAILURE
+      // --------------------------------------------------------
+
+      if (
+        [
+          "failed",
+          "failure",
+          "error",
+        ].includes(status)
+      ) {
+
+        setRunning(false);
+
+        const errors =
+          Array.isArray(
+            data?.errors
+          )
+            ? data.errors
+            : [];
+
+
+        const lastError =
+          errors.length
+            ? errors[
+                errors.length - 1
+              ]
+            : null;
+
+
+        setError(
+          typeof lastError ===
+          "string"
+            ? lastError
+            : lastError?.message ||
+              data?.error ||
+              data?.detail ||
+              "BSP automation failed."
+        );
+
+        return;
+      }
+
+
+      // --------------------------------------------------------
+      // CONTINUE POLLING
+      // --------------------------------------------------------
+
+      pollTimerRef.current =
+        setTimeout(
+          () =>
+            pollBspStatus(
+              currentRunId
+            ),
+          1000
+        );
+
+    } catch (err) {
+
+      console.error(
+        "BSP status polling failed:",
+        err
+      );
+
+      setRunning(false);
+
+      setError(
+        getErrorMessage(err)
+      );
     }
   };
 
 
-  // =========================================================
-  // RUN INVENTORY AUTOMATION
-  // =========================================================
+  // ==========================================================
+  // RUN BSP AUTOMATION
+  // ==========================================================
 
   const runAutomation = async () => {
 
@@ -277,244 +625,317 @@ function App() {
     }
 
 
-    // -------------------------------------------------------
-    // RESET UI
-    // -------------------------------------------------------
-
-    setRunning(true);
-
-    setRunningStep(0);
-
     setError("");
-
     setNotification("");
-
     setWorkflowResult(null);
+    setRunId(null);
+    setRunningStep(0);
+    setUploadProgress(0);
 
-    let stepTimer;
+
+    // --------------------------------------------------------
+    // VALIDATION
+    // --------------------------------------------------------
 
     try {
 
-      // -----------------------------------------------------
-      // MAKE SURE BACKEND IS AVAILABLE
-      // -----------------------------------------------------
+      validateExcelFile(
+        previousFile,
+        "Previous inventory"
+      );
 
-      if (backendStatus !== "online") {
+      validateExcelFile(
+        currentFile,
+        "Current inventory"
+      );
 
-        await checkBackend();
+    } catch (err) {
 
-      }
+      setError(
+        getErrorMessage(err)
+      );
+
+      setActivePage(
+        "automation"
+      );
+
+      return;
+    }
 
 
-      // -----------------------------------------------------
-      // UPLOAD SELECTED INVENTORY FILES
-      // -----------------------------------------------------
+    // --------------------------------------------------------
+    // BACKEND CHECK
+    // --------------------------------------------------------
 
-      await uploadInventoryFiles();
+    if (
+      backendStatus !==
+      "online"
+    ) {
+
+      await checkBackend();
+
+      // Give the state a moment to update.
+      // The actual request below will still
+      // be the final source of truth.
+    }
+
+
+    setRunning(true);
+
+
+    try {
+
+      // ------------------------------------------------------
+      // FORM DATA
+      // ------------------------------------------------------
+
+      const formData =
+        new FormData();
+
+
+      formData.append(
+        "previous_file",
+        previousFile
+      );
+
+
+      formData.append(
+        "current_file",
+        currentFile
+      );
+
+
+      formData.append(
+        "mode",
+        "offline"
+      );
+
+
+      formData.append(
+        "plant",
+        selectedPlant
+      );
+
+
+      formData.append(
+        "previous_period",
+        previousPeriod
+      );
+
+
+      formData.append(
+        "current_period",
+        currentPeriod
+      );
+
+
+      formData.append(
+        "storage_location",
+        storageLocation
+      );
+
+
+      // ------------------------------------------------------
+      // UI
+      // ------------------------------------------------------
 
       setNotification(
-        "Inventory files uploaded successfully. Starting agent..."
+        "Uploading Previous and Current raw MC.1 files..."
       );
 
 
-      // -----------------------------------------------------
-      // REQUEST BODY
-      // -----------------------------------------------------
-
-      const requestBody = {
-
-        user_id: "BSP_DASHBOARD_USER",
-
-        tcode: "MC.1",
-
-        variant: "B002159",
-
-        plant: selectedPlant,
-
-        previous_period: previousPeriod,
-
-        current_period: currentPeriod,
-
-        storage_location: storageLocation,
-
-      };
+      setUploadProgress(20);
 
 
-      console.log(
-        "Starting BSP inventory automation..."
-      );
+      // ------------------------------------------------------
+      // REAL BSP ENDPOINT
+      // ------------------------------------------------------
 
-      console.log(
-        "API:",
-        `${API_BASE_URL}/agent/run`
-      );
-
-      console.log(
-        "Request:",
-        requestBody
-      );
-
-
-      // -----------------------------------------------------
-      // VISUAL STEP PROGRESS
-      // -----------------------------------------------------
-
-      stepTimer = setInterval(() => {
-
-        setRunningStep((current) => {
-
-          if (current >= WORKFLOW_STEPS.length - 1) {
-
-            return current;
-
+      const response =
+        await fetch(
+          `${API_BASE_URL}/bsp/run`,
+          {
+            method: "POST",
+            body: formData,
           }
-
-          return current + 1;
-
-        });
-
-      }, 1200);
+        );
 
 
-      // -----------------------------------------------------
-      // CALL FASTAPI AGENT
-      // -----------------------------------------------------
+      setUploadProgress(70);
 
-      const response = await fetch(
-        `${API_BASE_URL}/agent/run`,
-        {
-          method: "POST",
-
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-
-          body: JSON.stringify(
-            requestBody
-          ),
-        }
-      );
-
-
-      clearInterval(stepTimer);
-
-
-      // -----------------------------------------------------
-      // READ RESPONSE
-      // -----------------------------------------------------
 
       const data =
-        await parseResponse(response);
+        await parseResponse(
+          response
+        );
 
 
       console.log(
-        "Agent response:",
+        "BSP /run response:",
         data
       );
 
 
-      // -----------------------------------------------------
-      // HANDLE HTTP ERRORS
-      // -----------------------------------------------------
-
       if (!response.ok) {
 
-        const detail =
+        throw new Error(
           data?.detail ||
           data?.message ||
-          `Agent request failed with HTTP ${response.status}`;
-
-        throw new Error(detail);
+          data?.error ||
+          `BSP automation failed with HTTP ${response.status}`
+        );
       }
 
 
-      // -----------------------------------------------------
-      // SAVE RESULT
-      // -----------------------------------------------------
+      setUploadProgress(100);
 
-      setRunningStep(
-        WORKFLOW_STEPS.length
+
+      // ------------------------------------------------------
+      // RUN ID
+      // ------------------------------------------------------
+
+      const returnedRunId =
+        data?.run_id ||
+        data?.runId ||
+        data?.id;
+
+
+      if (!returnedRunId) {
+
+        // Some implementations may
+        // execute synchronously.
+
+        if (
+          [
+            "completed",
+            "complete",
+            "success",
+          ].includes(
+            normalizeStatus(
+              data?.status
+            )
+          )
+        ) {
+
+          setWorkflowResult(
+            data
+          );
+
+          setRunningStep(
+            WORKFLOW_STEPS.length
+          );
+
+          setRunning(false);
+
+          setNotification(
+            "Inventory automation completed successfully."
+          );
+
+          setActivePage(
+            "results"
+          );
+
+          return;
+        }
+
+
+        throw new Error(
+          "Backend did not return a BSP run ID."
+        );
+      }
+
+
+      setRunId(
+        returnedRunId
       );
 
-      setWorkflowResult(data);
-
-
-      // -----------------------------------------------------
-      // SUCCESS MESSAGE
-      // -----------------------------------------------------
 
       setNotification(
-        "Inventory automation completed successfully."
+        "Automation started. Processing raw MC.1 data..."
       );
 
 
-      // -----------------------------------------------------
-      // MOVE TO RESULTS
-      // -----------------------------------------------------
+      // ------------------------------------------------------
+      // START STATUS POLLING
+      // ------------------------------------------------------
 
-      setActivePage("results");
+      setRunningStep(0);
 
+
+      pollBspStatus(
+        returnedRunId
+      );
 
     } catch (err) {
 
       console.error(
-        "Inventory automation failed:",
+        "BSP automation failed:",
         err
       );
 
-
-      setError(
-        err?.message ||
-        "Unable to run inventory automation."
-      );
-
-
-    } finally {
-
-      if (stepTimer) {
-        clearInterval(stepTimer);
-      }
-
       setRunning(false);
 
-      setRunningStep(-1);
+      setUploadProgress(0);
+
+      setError(
+        getErrorMessage(err)
+      );
     }
   };
 
 
-  // =========================================================
-  // DOWNLOAD REPORT
-  // =========================================================
+  // ==========================================================
+  // DOWNLOAD BSP FILE
+  // ==========================================================
 
-  const downloadReport = async () => {
+  const downloadBspFile = async (
+    filename = "BSP_Inventory.xlsx"
+  ) => {
+
+    if (!runId) {
+
+      setError(
+        "No completed BSP run is available."
+      );
+
+      return;
+    }
+
 
     try {
 
       setError("");
 
       setNotification(
-        "Preparing inventory report..."
+        `Preparing ${filename}...`
       );
 
 
-      const response = await fetch(
-        `${API_BASE_URL}/agent/report/download`,
-        {
-          method: "GET",
-        }
-      );
+      const response =
+        await fetch(
+          `${API_BASE_URL}/bsp/files/${encodeURIComponent(
+            runId
+          )}/${encodeURIComponent(
+            filename
+          )}`,
+          {
+            method: "GET",
+          }
+        );
 
 
       if (!response.ok) {
 
         const data =
-          await parseResponse(response);
+          await parseResponse(
+            response
+          );
 
 
         throw new Error(
           data?.detail ||
-          `Report download failed with HTTP ${response.status}`
+          data?.message ||
+          `File download failed with HTTP ${response.status}`
         );
       }
 
@@ -524,80 +945,179 @@ function App() {
 
 
       const url =
-        window.URL.createObjectURL(blob);
+        window.URL.createObjectURL(
+          blob
+        );
 
 
       const link =
-        document.createElement("a");
+        document.createElement(
+          "a"
+        );
 
 
       link.href = url;
 
       link.download =
-        "BSP_Inventory_Report.xlsx";
+        filename;
 
 
-      document.body.appendChild(link);
+      document.body.appendChild(
+        link
+      );
+
 
       link.click();
+
 
       link.remove();
 
 
-      window.URL.revokeObjectURL(url);
+      window.URL.revokeObjectURL(
+        url
+      );
 
 
       setNotification(
-        "BSP Inventory Report downloaded successfully."
+        `${filename} downloaded successfully.`
       );
-
 
     } catch (err) {
 
       console.error(
-        "Report download failed:",
+        "BSP file download failed:",
         err
       );
 
 
       setError(
-        err?.message ||
-        "Unable to download report."
+        getErrorMessage(err)
       );
     }
   };
 
 
-  // =========================================================
-  // GET WORKFLOW STEPS
-  // =========================================================
+  // ==========================================================
+  // WORKFLOW STEPS
+  // ==========================================================
 
-  const workflowSteps =
-    workflowResult?.steps || [];
+  const backendSteps =
+    Array.isArray(
+      workflowResult?.steps
+    )
+      ? workflowResult.steps
+      : [];
 
 
-  // =========================================================
-  // GET STEP STATUS
-  // =========================================================
+  const getStepStatus = (
+    stepName
+  ) => {
 
-  const getStepStatus = (stepName) => {
+    // --------------------------------------------------------
+    // BACKEND RESULT
+    // --------------------------------------------------------
 
-    // -------------------------------------------------------
-    // During execution use visual progress
-    // -------------------------------------------------------
+    if (
+      backendSteps.length
+    ) {
+
+      const backendStep =
+        backendSteps.find(
+          (step) => {
+
+            const name =
+              String(
+                step?.step ||
+                step?.name ||
+                step?.stage ||
+                ""
+              ).toLowerCase();
+
+
+            return (
+              name ===
+                stepName.toLowerCase() ||
+              name.includes(
+                stepName.toLowerCase()
+              ) ||
+              stepName
+                .toLowerCase()
+                .includes(name)
+            );
+          }
+        );
+
+
+      if (backendStep) {
+
+        const status =
+          normalizeStatus(
+            backendStep.status
+          );
+
+
+        if (
+          [
+            "completed",
+            "complete",
+            "success",
+            "successful",
+            "done",
+          ].includes(status)
+        ) {
+          return "completed";
+        }
+
+
+        if (
+          [
+            "failed",
+            "failure",
+            "error",
+          ].includes(status)
+        ) {
+          return "failed";
+        }
+
+
+        if (
+          [
+            "running",
+            "processing",
+            "in_progress",
+            "in-progress",
+          ].includes(status)
+        ) {
+          return "running";
+        }
+      }
+    }
+
+
+    // --------------------------------------------------------
+    // VISUAL FALLBACK
+    // --------------------------------------------------------
 
     if (running) {
 
       const index =
-        WORKFLOW_STEPS.indexOf(stepName);
+        WORKFLOW_STEPS.indexOf(
+          stepName
+        );
 
 
-      if (index < runningStep) {
+      if (
+        index <
+        runningStep
+      ) {
         return "completed";
       }
 
 
-      if (index === runningStep) {
+      if (
+        index ===
+        runningStep
+      ) {
         return "running";
       }
 
@@ -606,27 +1126,13 @@ function App() {
     }
 
 
-    // -------------------------------------------------------
-    // After execution use backend result
-    // -------------------------------------------------------
-
-    const step =
-      workflowSteps.find(
-        (item) =>
-          item.step === stepName
-      );
-
-
-    return (
-      step?.status ||
-      "pending"
-    );
+    return "pending";
   };
 
 
-  // =========================================================
-  // GET COMPARISON RESULT
-  // =========================================================
+  // ==========================================================
+  // COMPARISON RESULT
+  // ==========================================================
 
   const comparisonResult =
     workflowResult?.comparison_result ||
@@ -634,55 +1140,53 @@ function App() {
     null;
 
 
-  // =========================================================
-  // GET COMPARISON SUMMARY
-  // =========================================================
-
   const comparisonSummary =
     comparisonResult?.summary ||
     workflowResult?.results?.comparison?.summary ||
     {};
 
 
-  // =========================================================
-  // SUMMARY VALUES
-  // =========================================================
-
   const newMaterials =
     Number(
-      comparisonSummary.new_materials ??
+      comparisonSummary?.new_materials ??
+      comparisonSummary?.newMaterials ??
       0
     );
 
 
   const removedMaterials =
     Number(
-      comparisonSummary.removed_materials ??
+      comparisonSummary?.removed_materials ??
+      comparisonSummary?.removedMaterials ??
       0
     );
 
 
   const existingMaterials =
     Number(
-      comparisonSummary.existing_materials ??
+      comparisonSummary?.existing_materials ??
+      comparisonSummary?.existingMaterials ??
       0
     );
 
 
   const quantityChange =
     Number(
-      comparisonSummary.total_quantity_change ??
+      comparisonSummary?.total_quantity_change ??
+      comparisonSummary?.totalQuantityChange ??
       0
     );
 
-  // =========================================================
-  // GET AI INVENTORY ANALYSIS
-  // =========================================================
+
+  // ==========================================================
+  // AI ANALYSIS
+  // ==========================================================
 
   const inventoryAnalysis =
     workflowResult?.metadata?.inventory_analysis ||
     workflowResult?.results?.analysis ||
     null;
+
 
   const analysisData =
     inventoryAnalysis?.analysis ||
@@ -690,222 +1194,250 @@ function App() {
     inventoryAnalysis ||
     {};
 
+
   const analysisRisk =
     analysisData?.risk_level ??
     analysisData?.risk?.level ??
     "Not evaluated";
 
+
   const significantChanges =
-    analysisData?.significant_changes ??
-    [];
+    Array.isArray(
+      analysisData?.significant_changes
+    )
+      ? analysisData.significant_changes
+      : [];
+
 
   const topIncreases =
-    analysisData?.top_increases ??
-    [];
+    Array.isArray(
+      analysisData?.top_increases
+    )
+      ? analysisData.top_increases
+      : [];
+
 
   const topDecreases =
-    analysisData?.top_decreases ??
-    [];
+    Array.isArray(
+      analysisData?.top_decreases
+    )
+      ? analysisData.top_decreases
+      : [];
+
 
   const recommendations =
-    analysisData?.recommendations ??
-    [];
+    Array.isArray(
+      analysisData?.recommendations
+    )
+      ? analysisData.recommendations
+      : [];
 
-  const zeroStockRaw =
-    analysisData?.zero_stock_materials_count ??
-    (
-      Array.isArray(
-        analysisData?.zero_stock_materials
-      )
-        ? analysisData.zero_stock_materials.length
-        : analysisData?.zero_stock_materials
-    ) ??
-    analysisData?.zero_stock ??
-    0;
-
-  const zeroStockNumber = Number(zeroStockRaw);
 
   const zeroStockMaterials =
-    Number.isFinite(zeroStockNumber)
-      ? zeroStockNumber
-      : 0;
+    Number(
+      analysisData?.zero_stock_materials_count ??
+      (
+        Array.isArray(
+          analysisData?.zero_stock_materials
+        )
+          ? analysisData.zero_stock_materials.length
+          : analysisData?.zero_stock_materials
+      ) ??
+      analysisData?.zero_stock ??
+      0
+    );
 
-  const significantChangeCount =
-    Array.isArray(significantChanges)
-      ? significantChanges.length
-      : Number(
-        analysisData?.significant_changes_count ??
-        0
-      );
 
-  // =========================================================
+  // ==========================================================
   // COMPARISON ROWS
-  // =========================================================
+  // ==========================================================
 
   const comparisonRows =
-    Array.isArray(comparisonResult?.comparison)
+    Array.isArray(
+      comparisonResult?.comparison
+    )
       ? comparisonResult.comparison
-      : Array.isArray(workflowResult?.results?.comparison?.comparison)
+      : Array.isArray(
+          workflowResult?.results?.comparison?.comparison
+        )
         ? workflowResult.results.comparison.comparison
         : [];
 
 
-  // ---------------------------------------------------------
-  // Normalize backend row fields
-  // ---------------------------------------------------------
+  const normalizedRows =
+    comparisonRows.map(
+      (row, index) => {
 
-  const normalizedRows = comparisonRows.map(
-    (row, index) => ({
-      id: index,
-
-      materialCode:
-        row.Material_Code ??
-        row.material_code ??
-        row["Material Code"] ??
-        row.material ??
-        "-",
-
-      materialName:
-        row.Material_Name ??
-        row.material_name ??
-        row["Material Name"] ??
-        row.name ??
-        "-",
-
-      previousQuantity:
-        Number(
-          row.Previous_Quantity ??
-          row.previous_quantity ??
-          row["Previous Quantity"] ??
-          row.previous_qty ??
-          0
-        ),
-
-      currentQuantity:
-        Number(
-          row.Current_Quantity ??
-          row.current_quantity ??
-          row["Current Quantity"] ??
-          row.current_qty ??
-          0
-        ),
-
-      quantityChange:
-        Number(
-          row.Quantity_Change ??
-          row.quantity_change ??
-          row["Quantity Change"] ??
-          row.change ??
-          0
-        ),
-
-      unit:
-        row.Unit ??
-        row.unit ??
-        "-",
-
-      plant:
-        row.Plant ??
-        row.plant ??
-        "-",
-
-      status:
-        row.Status ??
-        row.status ??
-        "Existing",
-
-      inventoryKey:
-        row.Inventory_Key ??
-        row.inventory_key ??
-        row["Inventory Key"] ??
-        "-",
-    })
-  );
+        const previousQuantity =
+          Number(
+            row?.Previous_Quantity ??
+            row?.previous_quantity ??
+            row?.["Previous Quantity"] ??
+            row?.previous_qty ??
+            0
+          );
 
 
-  // =========================================================
-  // RI / CAPITAL CLASSIFICATION
-  // =========================================================
+        const currentQuantity =
+          Number(
+            row?.Current_Quantity ??
+            row?.current_quantity ??
+            row?.["Current Quantity"] ??
+            row?.current_qty ??
+            0
+          );
+
+
+        const quantityChangeValue =
+          Number(
+            row?.Quantity_Change ??
+            row?.quantity_change ??
+            row?.["Quantity Change"] ??
+            row?.change ??
+            currentQuantity -
+              previousQuantity
+          );
+
+
+        return {
+
+          id: index,
+
+          materialCode:
+            row?.Material_Code ??
+            row?.material_code ??
+            row?.["Material Code"] ??
+            row?.material ??
+            "-",
+
+          materialName:
+            row?.Material_Name ??
+            row?.material_name ??
+            row?.["Material Name"] ??
+            row?.name ??
+            "-",
+
+          previousQuantity,
+
+          currentQuantity,
+
+          quantityChange:
+            quantityChangeValue,
+
+          unit:
+            row?.Unit ??
+            row?.unit ??
+            "-",
+
+          plant:
+            row?.Plant ??
+            row?.plant ??
+            "-",
+
+          status:
+            row?.Status ??
+            row?.status ??
+            "Existing",
+
+          inventoryKey:
+            row?.Inventory_Key ??
+            row?.inventory_key ??
+            row?.["Inventory Key"] ??
+            "-",
+        };
+      }
+    );
+
+
+  // ==========================================================
+  // CLASSIFICATION
+  // ==========================================================
 
   const classificationResult =
     workflowResult?.metadata?.inventory_classification ||
     workflowResult?.results?.classification ||
     null;
 
+
   const classificationData =
     classificationResult?.classification ||
     classificationResult?.data ||
     {};
 
-  const classificationReferencesAvailable =
-    classificationResult?.references_available ??
-    classificationData?.references_available ??
-    true;
-
-  const classificationWarnings =
-    Array.isArray(classificationData?.warnings)
-      ? classificationData.warnings
-      : [];
 
   const classificationRowsRaw =
-    Array.isArray(classificationResult?.comparison)
+    Array.isArray(
+      classificationResult?.comparison
+    )
       ? classificationResult.comparison
-      : Array.isArray(classificationResult?.results)
+      : Array.isArray(
+          classificationResult?.results
+        )
         ? classificationResult.results
         : [];
 
+
   const classificationRows =
-    classificationRowsRaw.map((row, index) => ({
-      id: `classification-${index}`,
+    classificationRowsRaw.map(
+      (row, index) => ({
 
-      materialCode:
-        row.Material_Code ??
-        row.material_code ??
-        row["Material Code"] ??
-        row.material ??
-        "-",
+        id:
+          `classification-${index}`,
 
-      materialName:
-        row.Material_Name ??
-        row.material_name ??
-        row["Material Name"] ??
-        row.name ??
-        "-",
+        materialCode:
+          row?.Material_Code ??
+          row?.material_code ??
+          row?.["Material Code"] ??
+          row?.material ??
+          "-",
 
-      inventoryType:
-        row.Inventory_Type ??
-        row.inventory_type ??
-        row["Inventory Type"] ??
-        row.classification ??
-        "UNCLASSIFIED",
+        materialName:
+          row?.Material_Name ??
+          row?.material_name ??
+          row?.["Material Name"] ??
+          row?.name ??
+          "-",
 
-      classificationReason:
-        row.Classification_Reason ??
-        row.classification_reason ??
-        row["Classification Reason"] ??
-        row.reason ??
-        "-",
-    }));
+        inventoryType:
+          row?.Inventory_Type ??
+          row?.inventory_type ??
+          row?.["Inventory Type"] ??
+          row?.classification ??
+          "UNCLASSIFIED",
+
+        classificationReason:
+          row?.Classification_Reason ??
+          row?.classification_reason ??
+          row?.["Classification Reason"] ??
+          row?.reason ??
+          "-",
+      })
+    );
+
 
   const classificationCounts = {
+
     ri: Number(
       classificationData?.ri_count ??
       classificationData?.RI_count ??
       classificationData?.ri_materials ??
       0
     ),
+
     capital: Number(
       classificationData?.capital_count ??
       classificationData?.CAPITAL_count ??
       classificationData?.capital_materials ??
       0
     ),
+
     normal: Number(
       classificationData?.normal_count ??
       classificationData?.NORMAL_count ??
       classificationData?.normal_materials ??
       0
     ),
+
     unclassified: Number(
       classificationData?.unclassified_count ??
       classificationData?.UNCLASSIFIED_count ??
@@ -914,127 +1446,153 @@ function App() {
     ),
   };
 
-  // =========================================================
-  // FILTER + SEARCH
-  // =========================================================
 
-  const filteredRows = normalizedRows.filter(
-    (row) => {
+  // ==========================================================
+  // SEARCH / FILTER / SORT
+  // ==========================================================
+
+  const displayedRows =
+    useMemo(() => {
 
       const search =
-        resultSearch.trim().toLowerCase();
+        resultSearch
+          .trim()
+          .toLowerCase();
 
-      const matchesSearch =
-        !search ||
-        String(row.materialCode)
-          .toLowerCase()
-          .includes(search) ||
-        String(row.materialName)
-          .toLowerCase()
-          .includes(search) ||
-        String(row.plant)
-          .toLowerCase()
-          .includes(search);
 
-      const matchesFilter =
-        resultFilter === "All" ||
-        String(row.status).toLowerCase() ===
-        resultFilter.toLowerCase();
+      let rows =
+        normalizedRows.filter(
+          (row) => {
 
-      return (
-        matchesSearch &&
-        matchesFilter
+            const matchesSearch =
+              !search ||
+              String(
+                row.materialCode
+              )
+                .toLowerCase()
+                .includes(search) ||
+              String(
+                row.materialName
+              )
+                .toLowerCase()
+                .includes(search) ||
+              String(
+                row.plant
+              )
+                .toLowerCase()
+                .includes(search);
+
+
+            const matchesFilter =
+              resultFilter ===
+                "All" ||
+              String(
+                row.status
+              ).toLowerCase() ===
+                resultFilter.toLowerCase();
+
+
+            return (
+              matchesSearch &&
+              matchesFilter
+            );
+          }
+        );
+
+
+      rows = [
+        ...rows,
+      ].sort(
+        (a, b) => {
+
+          if (
+            resultSort ===
+            "quantity-desc"
+          ) {
+            return (
+              b.quantityChange -
+              a.quantityChange
+            );
+          }
+
+
+          if (
+            resultSort ===
+            "quantity-asc"
+          ) {
+            return (
+              a.quantityChange -
+              b.quantityChange
+            );
+          }
+
+
+          if (
+            resultSort ===
+            "material"
+          ) {
+            return String(
+              a.materialCode
+            ).localeCompare(
+              String(
+                b.materialCode
+              )
+            );
+          }
+
+
+          return 0;
+        }
       );
-    }
-  );
 
 
-  // =========================================================
-  // SORT
-  // =========================================================
+      return rows;
 
-  const displayedRows = [
-    ...filteredRows,
-  ].sort((a, b) => {
-
-    if (resultSort === "quantity-desc") {
-      return (
-        b.quantityChange -
-        a.quantityChange
-      );
-    }
-
-    if (resultSort === "quantity-asc") {
-      return (
-        a.quantityChange -
-        b.quantityChange
-      );
-    }
-
-    if (resultSort === "material") {
-      return String(
-        a.materialCode
-      ).localeCompare(
-        String(b.materialCode)
-      );
-    }
-
-    return 0;
-  });
+    }, [
+      normalizedRows,
+      resultSearch,
+      resultFilter,
+      resultSort,
+    ]);
 
 
-  // =========================================================
+  // ==========================================================
   // WORKFLOW STATUS
-  // =========================================================
+  // ==========================================================
 
   const workflowStatus =
-    workflowResult?.status ||
-    "idle";
+    normalizeStatus(
+      workflowResult?.status
+    ) || "idle";
 
 
-  // =========================================================
+  // ==========================================================
   // RENDER
-  // =========================================================
+  // ==========================================================
 
   return (
 
     <div className="app-shell">
 
-
-      {/* ===================================================
+      {/* ====================================================
           SIDEBAR
-      =================================================== */}
+      ==================================================== */}
 
       <aside className="sidebar">
-
-
-        {/* BRAND */}
 
         <div className="brand">
 
           <div className="brand-icon">
-
             <BarChart3 size={23} />
-
           </div>
 
-
           <div>
-
-            <h2>
-              SapAi
-            </h2>
-
-            <span>
-              BSP Automation
-            </span>
-
+            <h2>SapAi</h2>
+            <span>BSP Automation</span>
           </div>
 
         </div>
 
-
-        {/* MAIN NAVIGATION */}
 
         <div className="sidebar-section">
 
@@ -1050,16 +1608,13 @@ function App() {
                 : "nav-item"
             }
             onClick={() =>
-              setActivePage("dashboard")
+              setActivePage(
+                "dashboard"
+              )
             }
           >
-
             <Home size={18} />
-
-            <span>
-              Dashboard
-            </span>
-
+            <span>Dashboard</span>
           </button>
 
 
@@ -1070,16 +1625,13 @@ function App() {
                 : "nav-item"
             }
             onClick={() =>
-              setActivePage("automation")
+              setActivePage(
+                "automation"
+              )
             }
           >
-
             <Play size={18} />
-
-            <span>
-              Automation
-            </span>
-
+            <span>Automation</span>
           </button>
 
 
@@ -1090,22 +1642,17 @@ function App() {
                 : "nav-item"
             }
             onClick={() =>
-              setActivePage("results")
+              setActivePage(
+                "results"
+              )
             }
           >
-
             <TrendingUp size={18} />
-
-            <span>
-              Results
-            </span>
-
+            <span>Results</span>
           </button>
 
         </div>
 
-
-        {/* SYSTEM */}
 
         <div className="sidebar-section">
 
@@ -1117,22 +1664,17 @@ function App() {
           <button
             className="nav-item"
             onClick={() =>
-              setActivePage("settings")
+              setActivePage(
+                "settings"
+              )
             }
           >
-
             <Settings size={18} />
-
-            <span>
-              Settings
-            </span>
-
+            <span>Settings</span>
           </button>
 
         </div>
 
-
-        {/* BACKEND STATUS */}
 
         <div className="sidebar-bottom">
 
@@ -1148,22 +1690,20 @@ function App() {
               }
             />
 
-
             <div>
 
               <strong>
                 Backend
               </strong>
 
-
               <span>
-
-                {backendStatus === "online"
+                {backendStatus ===
+                "online"
                   ? "Connected"
-                  : backendStatus === "checking"
+                  : backendStatus ===
+                      "checking"
                     ? "Checking..."
                     : "Offline"}
-
               </span>
 
             </div>
@@ -1175,17 +1715,15 @@ function App() {
       </aside>
 
 
-      {/* ===================================================
-          MAIN CONTENT
-      =================================================== */}
+      {/* ====================================================
+          MAIN
+      ==================================================== */}
 
       <main className="main-content">
-
 
         {/* TOPBAR */}
 
         <header className="topbar">
-
 
           <div>
 
@@ -1193,17 +1731,17 @@ function App() {
               BSP INVENTORY AUTOMATION
             </p>
 
-
             <h1>
-
-              {activePage === "dashboard"
+              {activePage ===
+              "dashboard"
                 ? "Inventory Dashboard"
-                : activePage === "automation"
+                : activePage ===
+                    "automation"
                   ? "Run Automation"
-                  : activePage === "results"
+                  : activePage ===
+                      "results"
                     ? "Inventory Results"
                     : "System Settings"}
-
             </h1>
 
           </div>
@@ -1211,17 +1749,16 @@ function App() {
 
           <div className="topbar-actions">
 
-
             <button
               className="icon-button"
-              onClick={checkBackend}
+              onClick={
+                checkBackend
+              }
               title="Refresh backend status"
             >
-
               <RefreshCw
                 size={18}
               />
-
             </button>
 
 
@@ -1230,7 +1767,6 @@ function App() {
               <div className="avatar">
                 PJ
               </div>
-
 
               <div>
 
@@ -1251,29 +1787,26 @@ function App() {
         </header>
 
 
-        {/* =================================================
-            NOTIFICATION
-        ================================================= */}
+        {/* NOTIFICATION */}
 
         {notification && (
 
           <div className="notification success">
 
-            <CheckCircle2 size={18} />
+            <CheckCircle2
+              size={18}
+            />
 
             <span>
               {notification}
             </span>
-
 
             <button
               onClick={() =>
                 setNotification("")
               }
             >
-
               <XCircle size={17} />
-
             </button>
 
           </div>
@@ -1281,29 +1814,34 @@ function App() {
         )}
 
 
-        {/* =================================================
-            ERROR
-        ================================================= */}
+        {/* ERROR */}
 
         {error && (
 
           <div className="notification error">
 
-            <CircleAlert size={18} />
+            <CircleAlert
+              size={18}
+            />
 
-            <span>
-              {error}
-            </span>
+            <div>
 
+              <strong>
+                Automation Error
+              </strong>
+
+              <span>
+                {error}
+              </span>
+
+            </div>
 
             <button
               onClick={() =>
                 setError("")
               }
             >
-
               <XCircle size={17} />
-
             </button>
 
           </div>
@@ -1311,75 +1849,53 @@ function App() {
         )}
 
 
-        {/* =================================================
+        {/* ==================================================
             DASHBOARD
-        ================================================= */}
+        ================================================== */}
 
-        {activePage === "dashboard" && (
+        {activePage ===
+          "dashboard" && (
 
           <section className="page">
 
-
-            {/* HERO */}
-
             <div className="hero-card">
-
 
               <div className="hero-content">
 
-
                 <div className="hero-badge">
-
-                  <Activity size={15} />
-
+                  <Activity
+                    size={15}
+                  />
                   Deterministic Automation
-
                 </div>
 
-
                 <h2>
-                  Automate your BSP inventory workflow.
+                  Automate your BSP
+                  inventory workflow.
                 </h2>
 
-
                 <p>
-                  Process previous and current inventory,
-                  compare changes, generate the report,
-                  and validate the final workbook.
+                  Upload the raw Previous
+                  and Current MC.1 Excel
+                  workbooks and let the
+                  backend execute the
+                  complete inventory
+                  pipeline.
                 </p>
-
 
                 <button
                   className="primary-button"
-                  onClick={() => setActivePage("automation")}
-                  disabled={running}
+                  onClick={() =>
+                    setActivePage(
+                      "automation"
+                    )
+                  }
+                  disabled={
+                    running
+                  }
                 >
-
-                  {running ? (
-
-                    <>
-
-                      <Loader2
-                        size={18}
-                        className="spin"
-                      />
-
-                      Running Workflow...
-
-                    </>
-
-                  ) : (
-
-                    <>
-
-                      <Play size={18} />
-
-                      Run Inventory Automation
-
-                    </>
-
-                  )}
-
+                  <Play size={18} />
+                  Run Inventory Automation
                 </button>
 
               </div>
@@ -1388,24 +1904,18 @@ function App() {
               <div className="hero-visual">
 
                 <div className="visual-ring">
-
                   <FileSpreadsheet
                     size={48}
                   />
-
                 </div>
 
-
                 <div className="visual-line" />
-
 
                 <div className="visual-node">
-                  Compare
+                  MC.1
                 </div>
 
-
                 <div className="visual-line" />
-
 
                 <div className="visual-node">
                   Report
@@ -1416,55 +1926,62 @@ function App() {
             </div>
 
 
-            {/* STATS */}
-
             <div className="stats-grid">
-
 
               <StatCard
                 title="New Materials"
-                value={newMaterials}
+                value={
+                  newMaterials
+                }
                 icon={
-                  <Upload size={20} />
+                  <Upload
+                    size={20}
+                  />
                 }
               />
-
 
               <StatCard
                 title="Removed Materials"
-                value={removedMaterials}
+                value={
+                  removedMaterials
+                }
                 icon={
-                  <XCircle size={20} />
+                  <XCircle
+                    size={20}
+                  />
                 }
               />
-
 
               <StatCard
                 title="Existing Materials"
-                value={existingMaterials}
+                value={
+                  existingMaterials
+                }
                 icon={
-                  <RefreshCw size={20} />
+                  <RefreshCw
+                    size={20}
+                  />
                 }
               />
 
-
               <StatCard
                 title="Quantity Change"
-                value={quantityChange}
+                value={
+                  formatNumber(
+                    quantityChange
+                  )
+                }
                 icon={
-                  <TrendingUp size={20} />
+                  <TrendingUp
+                    size={20}
+                  />
                 }
               />
 
             </div>
 
 
-            {/* CONTENT GRID */}
-
             <div className="content-grid">
-
-
-              {/* WORKFLOW */}
 
               <div className="panel">
 
@@ -1481,7 +1998,6 @@ function App() {
                     </h3>
 
                   </div>
-
 
                   <ShieldCheck
                     size={22}
@@ -1502,8 +2018,6 @@ function App() {
               </div>
 
 
-              {/* SYSTEM HEALTH */}
-
               <div className="panel">
 
                 <div className="panel-header">
@@ -1520,7 +2034,6 @@ function App() {
 
                   </div>
 
-
                   <Activity
                     size={22}
                   />
@@ -1528,135 +2041,73 @@ function App() {
                 </div>
 
 
-                <div className="health-row">
-
-                  <div className="health-icon">
-
+                <HealthRow
+                  title="FastAPI Backend"
+                  description={
+                    backendStatus ===
+                    "online"
+                      ? "API is responding normally"
+                      : backendStatus ===
+                          "checking"
+                        ? "Checking API connection..."
+                        : "Backend connection unavailable"
+                  }
+                  status={
+                    backendStatus ===
+                    "online"
+                      ? "Online"
+                      : backendStatus ===
+                          "checking"
+                        ? "Checking"
+                        : "Offline"
+                  }
+                  icon={
                     <Activity
                       size={19}
                     />
-
-                  </div>
-
-
-                  <div>
-
-                    <strong>
-                      FastAPI Backend
-                    </strong>
-
-                    <span>
-
-                      {backendStatus === "online"
-                        ? "API is responding normally"
-                        : backendStatus === "checking"
-                          ? "Checking API connection..."
-                          : "Backend connection unavailable"}
-
-                    </span>
-
-                  </div>
+                  }
+                />
 
 
-                  <div
-                    className={
-                      backendStatus === "online"
-                        ? "health-status good"
-                        : backendStatus === "checking"
-                          ? "health-status"
-                          : "health-status bad"
-                    }
-                  >
-
-                    {backendStatus === "online"
-                      ? "Online"
-                      : backendStatus === "checking"
-                        ? "Checking"
-                        : "Offline"}
-
-                  </div>
-
-                </div>
-
-
-                <div className="health-row">
-
-                  <div className="health-icon">
-
+                <HealthRow
+                  title="Inventory Engine"
+                  description="Excel processing pipeline"
+                  status="Ready"
+                  icon={
                     <FileSpreadsheet
                       size={19}
                     />
-
-                  </div>
-
-
-                  <div>
-
-                    <strong>
-                      Inventory Engine
-                    </strong>
-
-                    <span>
-                      Excel processing pipeline
-                    </span>
-
-                  </div>
+                  }
+                />
 
 
-                  <div className="health-status good">
-                    Ready
-                  </div>
-
-                </div>
-
-
-                <div className="health-row">
-
-                  <div className="health-icon">
-
+                <HealthRow
+                  title="Report Validation"
+                  description="Generated reports are validated"
+                  status="Ready"
+                  icon={
                     <ShieldCheck
                       size={19}
                     />
-
-                  </div>
-
-
-                  <div>
-
-                    <strong>
-                      Report Validation
-                    </strong>
-
-                    <span>
-                      Generated reports are validated
-                    </span>
-
-                  </div>
-
-
-                  <div className="health-status good">
-                    Ready
-                  </div>
-
-                </div>
+                  }
+                />
 
               </div>
 
             </div>
 
           </section>
-
         )}
 
 
-        {/* =================================================
+        {/* ==================================================
             AUTOMATION
-        ================================================= */}
+        ================================================== */}
 
-        {activePage === "automation" && (
+        {activePage ===
+          "automation" && (
 
           <section className="page">
-
 
             <div className="page-intro">
 
@@ -1664,16 +2115,16 @@ function App() {
                 INVENTORY WORKFLOW
               </p>
 
-
               <h2>
                 Run BSP Inventory Automation
               </h2>
 
-
               <p>
-                Upload the two inventory workbooks, configure the
-                reporting scope, and let the agent execute the
-                deterministic BSP inventory workflow.
+                Upload the two raw MC.1
+                Excel workbooks. The
+                backend will process,
+                compare and generate
+                the inventory output.
               </p>
 
             </div>
@@ -1682,216 +2133,461 @@ function App() {
             <div className="automation-card automation-config-card">
 
               <div className="automation-card-header">
+
                 <div className="automation-icon">
-                  <FileSpreadsheet size={35} />
+                  <FileSpreadsheet
+                    size={35}
+                  />
                 </div>
 
                 <div>
-                  <p className="panel-kicker">WORKFLOW CONFIGURATION</p>
-                  <h3>MC.1 Inventory Workflow</h3>
-                  <p className="automation-muted">
-                    Configure the reporting period and inventory scope before running the agent.
+
+                  <p className="panel-kicker">
+                    INPUT DATA
                   </p>
+
+                  <h3>
+                    MC.1 Raw Inventory
+                  </h3>
+
+                  <p className="automation-muted">
+                    Upload Sheet 1 raw
+                    Excel files exactly as
+                    exported from your
+                    inventory process.
+                  </p>
+
                 </div>
+
               </div>
+
+
+              {/* FILE UPLOAD */}
 
               <div className="inventory-upload-section">
+
                 <div className="inventory-upload-header">
+
                   <div>
-                    <p className="panel-kicker">INPUT FILES</p>
-                    <h4>Upload Inventory Workbooks</h4>
-                    <p>
-                      Select the previous and current BSP inventory Excel files.
-                      Both files are uploaded to the backend before the agent runs.
+
+                    <p className="panel-kicker">
+                      RAW INPUT FILES
                     </p>
+
+                    <h4>
+                      Previous & Current
+                    </h4>
+
+                    <p>
+                      The files can contain
+                      the raw Sheet 1 data.
+                      You do not need to
+                      manually clean them
+                      before uploading.
+                    </p>
+
                   </div>
-                  <span className="upload-required">2 files required</span>
+
+                  <span className="upload-required">
+                    2 files required
+                  </span>
+
                 </div>
+
 
                 <div className="inventory-upload-grid">
-                  <label className={`inventory-file-box ${previousFile ? "has-file" : ""}`}>
-                    <div className="inventory-file-icon">
-                      <FileSpreadsheet size={25} />
-                    </div>
 
-                    <div className="inventory-file-content">
-                      <strong>Previous Inventory</strong>
-                      <span>Previous month / period workbook</span>
-                      {previousFile ? (
-                        <small title={previousFile.name}>{previousFile.name}</small>
-                      ) : (
-                        <small>No file selected</small>
-                      )}
-                    </div>
+                  <FileUploadBox
+                    label="Previous Inventory"
+                    description="Previous month / period raw MC.1 data"
+                    file={previousFile}
+                    disabled={
+                      running
+                    }
+                    onChange={
+                      setPreviousFile
+                    }
+                  />
 
-                    <span className="choose-file-button">
-                      {previousFile ? "Change File" : "Choose File"}
-                    </span>
 
-                    <input
-                      type="file"
-                      accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-                      onChange={(event) => setPreviousFile(event.target.files?.[0] || null)}
-                      disabled={running || uploadingFiles}
-                    />
-                  </label>
+                  <FileUploadBox
+                    label="Current Inventory"
+                    description="Current month / period raw MC.1 data"
+                    file={currentFile}
+                    disabled={
+                      running
+                    }
+                    onChange={
+                      setCurrentFile
+                    }
+                  />
 
-                  <label className={`inventory-file-box ${currentFile ? "has-file" : ""}`}>
-                    <div className="inventory-file-icon">
-                      <FileSpreadsheet size={25} />
-                    </div>
-
-                    <div className="inventory-file-content">
-                      <strong>Current Inventory</strong>
-                      <span>Current month / period workbook</span>
-                      {currentFile ? (
-                        <small title={currentFile.name}>{currentFile.name}</small>
-                      ) : (
-                        <small>No file selected</small>
-                      )}
-                    </div>
-
-                    <span className="choose-file-button">
-                      {currentFile ? "Change File" : "Choose File"}
-                    </span>
-
-                    <input
-                      type="file"
-                      accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-                      onChange={(event) => setCurrentFile(event.target.files?.[0] || null)}
-                      disabled={running || uploadingFiles}
-                    />
-                  </label>
                 </div>
+
 
                 <div className="upload-status-row">
-                  <span className={previousFile ? "file-ready" : "file-missing"}>
-                    {previousFile ? "✓ Previous file ready" : "○ Previous file required"}
+
+                  <span
+                    className={
+                      previousFile
+                        ? "file-ready"
+                        : "file-missing"
+                    }
+                  >
+                    {previousFile
+                      ? "✓ Previous raw file ready"
+                      : "○ Previous raw file required"}
                   </span>
-                  <span className={currentFile ? "file-ready" : "file-missing"}>
-                    {currentFile ? "✓ Current file ready" : "○ Current file required"}
+
+
+                  <span
+                    className={
+                      currentFile
+                        ? "file-ready"
+                        : "file-missing"
+                    }
+                  >
+                    {currentFile
+                      ? "✓ Current raw file ready"
+                      : "○ Current raw file required"}
                   </span>
+
                 </div>
+
               </div>
+
+
+              {/* CONFIGURATION */}
 
               <div className="automation-config-grid">
 
                 <label className="automation-field">
-                  <span>Previous Period</span>
+
+                  <span>
+                    Previous Period
+                  </span>
+
                   <select
-                    value={previousPeriod}
-                    onChange={(e) => setPreviousPeriod(e.target.value)}
-                    disabled={running}
+                    value={
+                      previousPeriod
+                    }
+                    onChange={(event) =>
+                      setPreviousPeriod(
+                        event.target.value
+                      )
+                    }
+                    disabled={
+                      running
+                    }
                   >
-                    <option>Previous Month</option>
-                    <option>Previous Quarter</option>
-                    <option>Previous Year</option>
+
+                    <option>
+                      Previous Month
+                    </option>
+
+                    <option>
+                      Previous Quarter
+                    </option>
+
+                    <option>
+                      Previous Year
+                    </option>
+
                   </select>
+
                 </label>
 
-                <label className="automation-field">
-                  <span>Current Period</span>
-                  <select
-                    value={currentPeriod}
-                    onChange={(e) => setCurrentPeriod(e.target.value)}
-                    disabled={running}
-                  >
-                    <option>Current Month</option>
-                    <option>Current Quarter</option>
-                    <option>Current Year</option>
-                  </select>
-                </label>
 
                 <label className="automation-field">
-                  <span>Plant</span>
+
+                  <span>
+                    Current Period
+                  </span>
+
+                  <select
+                    value={
+                      currentPeriod
+                    }
+                    onChange={(event) =>
+                      setCurrentPeriod(
+                        event.target.value
+                      )
+                    }
+                    disabled={
+                      running
+                    }
+                  >
+
+                    <option>
+                      Current Month
+                    </option>
+
+                    <option>
+                      Current Quarter
+                    </option>
+
+                    <option>
+                      Current Year
+                    </option>
+
+                  </select>
+
+                </label>
+
+
+                <label className="automation-field">
+
+                  <span>
+                    Plant
+                  </span>
+
                   <input
                     type="text"
-                    value={selectedPlant}
-                    onChange={(e) => setSelectedPlant(e.target.value.toUpperCase())}
-                    placeholder="BSP"
-                    disabled={running}
+                    value={
+                      selectedPlant
+                    }
+                    onChange={(event) =>
+                      setSelectedPlant(
+                        event.target.value
+                      )
+                    }
+                    placeholder="1000"
+                    disabled={
+                      running
+                    }
                   />
+
                 </label>
+
 
                 <label className="automation-field">
-                  <span>Storage Location</span>
+
+                  <span>
+                    Storage Location
+                  </span>
+
                   <select
-                    value={storageLocation}
-                    onChange={(e) => setStorageLocation(e.target.value)}
-                    disabled={running}
+                    value={
+                      storageLocation
+                    }
+                    onChange={(event) =>
+                      setStorageLocation(
+                        event.target.value
+                      )
+                    }
+                    disabled={
+                      running
+                    }
                   >
-                    <option>All</option>
-                    <option>Configured</option>
+
+                    <option>
+                      All
+                    </option>
+
+                    <option>
+                      Configured
+                    </option>
+
                   </select>
+
                 </label>
 
               </div>
 
+
+              {/* FIXED SAP CONFIG */}
+
               <div className="automation-fixed-config">
-                <div>
-                  <span>SAP Transaction</span>
-                  <strong>MC.1</strong>
-                </div>
 
                 <div>
-                  <span>Variant</span>
-                  <strong>B002159</strong>
+                  <span>
+                    SAP Transaction
+                  </span>
+
+                  <strong>
+                    MC.1
+                  </strong>
                 </div>
+
+
+                <div>
+                  <span>
+                    Variant
+                  </span>
+
+                  <strong>
+                    B002159
+                  </strong>
+                </div>
+
+
+                <div>
+                  <span>
+                    Execution Mode
+                  </span>
+
+                  <strong>
+                    Offline / Raw Excel
+                  </strong>
+                </div>
+
               </div>
+
+
+              {/* PROGRESS */}
+
+              {running && (
+
+                <div className="run-progress">
+
+                  <div className="run-progress-header">
+
+                    <span>
+                      Processing inventory...
+                    </span>
+
+                    <strong>
+                      {uploadProgress}%
+                    </strong>
+
+                  </div>
+
+                  <div className="progress-track">
+
+                    <div
+                      className="progress-fill"
+                      style={{
+                        width:
+                          `${uploadProgress}%`,
+                      }}
+                    />
+
+                  </div>
+
+                  {runId && (
+                    <small>
+                      Run ID: {runId}
+                    </small>
+                  )}
+
+                </div>
+
+              )}
+
+
+              {/* RUN BUTTON */}
 
               <button
                 className="primary-button large automation-run-button"
-                onClick={runAutomation}
+                onClick={
+                  runAutomation
+                }
                 disabled={
                   running ||
-                  uploadingFiles ||
                   !previousFile ||
                   !currentFile
                 }
               >
-                {running || uploadingFiles ? (
+
+                {running ? (
+
                   <>
-                    <Loader2 size={20} className="spin" />
-                    {uploadingFiles
-                      ? "Uploading Files..."
-                      : "Processing Inventory..."}
+                    <Loader2
+                      size={20}
+                      className="spin"
+                    />
+
+                    Processing Inventory...
                   </>
+
                 ) : (
+
                   <>
-                    <Play size={20} />
-                    Run Agent
+                    <Play
+                      size={20}
+                    />
+
+                    Run BSP Automation
                   </>
+
                 )}
+
               </button>
+
+
+              {/* RESET */}
+
+              {!running &&
+                (previousFile ||
+                  currentFile ||
+                  workflowResult) && (
+
+                <button
+                  className="secondary-button"
+                  onClick={
+                    resetRun
+                  }
+                >
+                  Reset Current Run
+                </button>
+
+              )}
 
             </div>
 
+
+            {/* LIVE WORKFLOW */}
+
             <div className="workflow-preview">
 
-              <WorkflowList
-                workflowResult={
-                  workflowResult
-                }
-                getStepStatus={
-                  getStepStatus
-                }
-              />
+              <div className="panel">
+
+                <div className="panel-header">
+
+                  <div>
+
+                    <p className="panel-kicker">
+                      LIVE EXECUTION
+                    </p>
+
+                    <h3>
+                      Automation Pipeline
+                    </h3>
+
+                  </div>
+
+                  <Activity
+                    size={22}
+                  />
+
+                </div>
+
+
+                <WorkflowList
+                  workflowResult={
+                    workflowResult
+                  }
+                  getStepStatus={
+                    getStepStatus
+                  }
+                />
+
+              </div>
 
             </div>
 
           </section>
-
         )}
 
 
-        {/* =================================================
+        {/* ==================================================
             RESULTS
-        ================================================= */}
+        ================================================== */}
 
-        {activePage === "results" && (
+        {activePage ===
+          "results" && (
 
           <section className="page">
-
 
             <div className="page-intro">
 
@@ -1899,15 +2595,14 @@ function App() {
                 AUTOMATION OUTPUT
               </p>
 
-
               <h2>
-                Inventory Comparison Results
+                Inventory Results
               </h2>
 
-
               <p>
-                Results from the latest completed
-                inventory automation run.
+                Results generated by
+                the latest BSP automation
+                run.
               </p>
 
             </div>
@@ -1921,29 +2616,26 @@ function App() {
                   size={48}
                 />
 
-
                 <h3>
                   No automation run yet
                 </h3>
 
-
                 <p>
-                  Run the inventory automation to generate
-                  comparison results.
+                  Upload Previous and
+                  Current raw MC.1 files
+                  and run the automation.
                 </p>
-
 
                 <button
                   className="primary-button"
                   onClick={() =>
-                    setActivePage("automation")
+                    setActivePage(
+                      "automation"
+                    )
                   }
                 >
-
                   <Play size={18} />
-
                   Run Automation
-
                 </button>
 
               </div>
@@ -1952,57 +2644,73 @@ function App() {
 
               <>
 
-
                 {/* RESULT STATS */}
 
                 <div className="stats-grid">
 
-
                   <StatCard
                     title="New Materials"
-                    value={newMaterials}
+                    value={
+                      newMaterials
+                    }
                     icon={
-                      <Upload size={20} />
+                      <Upload
+                        size={20}
+                      />
                     }
                   />
-
 
                   <StatCard
                     title="Removed Materials"
-                    value={removedMaterials}
+                    value={
+                      removedMaterials
+                    }
                     icon={
-                      <XCircle size={20} />
+                      <XCircle
+                        size={20}
+                      />
                     }
                   />
-
 
                   <StatCard
                     title="Existing Materials"
-                    value={existingMaterials}
+                    value={
+                      existingMaterials
+                    }
                     icon={
-                      <RefreshCw size={20} />
+                      <RefreshCw
+                        size={20}
+                      />
                     }
                   />
 
-
                   <StatCard
                     title="Quantity Change"
-                    value={quantityChange}
+                    value={
+                      formatNumber(
+                        quantityChange
+                      )
+                    }
                     icon={
-                      <TrendingUp size={20} />
+                      <TrendingUp
+                        size={20}
+                      />
                     }
                   />
 
                 </div>
-{/* =========================================================
-    AI INVENTORY ANALYSIS
-========================================================= */}
+
+
+                {/* AI ANALYSIS */}
 
                 {inventoryAnalysis && (
-                  <div className="ai-analysis-panel">
+
+                  <div className="results-panel">
 
                     <div className="panel-header">
+
                       <div>
+
                         <p className="panel-kicker">
                           AI INVENTORY ANALYSIS
                         </p>
@@ -2011,9 +2719,6 @@ function App() {
                           Inventory Intelligence
                         </h3>
 
-                        <span className="results-count">
-                          Automated interpretation of inventory changes
-                        </span>
                       </div>
 
                       <div
@@ -2023,183 +2728,147 @@ function App() {
                       >
                         {analysisRisk}
                       </div>
+
                     </div>
 
-                    {/* ANALYSIS STATS */}
 
                     <div className="analysis-stats">
 
                       <div className="analysis-stat">
-                        <span>Significant Changes</span>
+                        <span>
+                          Significant Changes
+                        </span>
+
                         <strong>
-                          {significantChangeCount}
+                          {
+                            significantChanges.length
+                          }
                         </strong>
                       </div>
 
+
                       <div className="analysis-stat">
-                        <span>Zero Stock Materials</span>
+                        <span>
+                          Zero Stock Materials
+                        </span>
+
                         <strong>
-                          {zeroStockMaterials}
+                          {
+                            formatNumber(
+                              zeroStockMaterials
+                            )
+                          }
                         </strong>
                       </div>
 
+
                       <div className="analysis-stat">
-                        <span>Top Increases</span>
+                        <span>
+                          Top Increases
+                        </span>
+
                         <strong>
-                          {Array.isArray(topIncreases)
-                            ? topIncreases.length
-                            : 0}
+                          {
+                            topIncreases.length
+                          }
                         </strong>
                       </div>
 
+
                       <div className="analysis-stat">
-                        <span>Top Decreases</span>
+                        <span>
+                          Top Decreases
+                        </span>
+
                         <strong>
-                          {Array.isArray(topDecreases)
-                            ? topDecreases.length
-                            : 0}
+                          {
+                            topDecreases.length
+                          }
                         </strong>
                       </div>
 
                     </div>
 
-                    {/* RECOMMENDATIONS */}
 
-                    {Array.isArray(recommendations) &&
-                      recommendations.length > 0 && (
+                    {recommendations.length >
+                      0 && (
 
-                        <div className="analysis-section">
+                      <div className="analysis-section">
 
-                          <div className="analysis-section-title">
-                            <ShieldCheck size={17} />
+                        <div className="analysis-section-title">
 
-                            <strong>
-                              Recommendations
-                            </strong>
-                          </div>
+                          <ShieldCheck
+                            size={17}
+                          />
 
-                          <div className="recommendation-list">
+                          <strong>
+                            Recommendations
+                          </strong>
 
-                            {recommendations
-                              .slice(0, 5)
-                              .map((recommendation, index) => (
+                        </div>
+
+
+                        <div className="recommendation-list">
+
+                          {recommendations
+                            .slice(0, 5)
+                            .map(
+                              (
+                                recommendation,
+                                index
+                              ) => (
 
                                 <div
                                   className="recommendation-item"
-                                  key={index}
+                                  key={
+                                    index
+                                  }
                                 >
+
                                   <span className="recommendation-number">
-                                    {index + 1}
+                                    {
+                                      index +
+                                      1
+                                    }
                                   </span>
 
                                   <span>
-                                    {typeof recommendation === "string"
+                                    {typeof recommendation ===
+                                    "string"
                                       ? recommendation
                                       : recommendation?.message ||
-                                      recommendation?.recommendation ||
-                                      JSON.stringify(
-                                        recommendation
-                                      )}
+                                        recommendation?.recommendation ||
+                                        JSON.stringify(
+                                          recommendation
+                                        )}
                                   </span>
-                                </div>
-
-                              ))}
-
-                          </div>
-
-                        </div>
-
-                      )}
-
-                    {/* SIGNIFICANT CHANGES */}
-
-                    {Array.isArray(significantChanges) &&
-                      significantChanges.length > 0 && (
-
-                        <div className="analysis-section">
-
-                          <div className="analysis-section-title">
-                            <TrendingUp size={17} />
-
-                            <strong>
-                              Significant Inventory Changes
-                            </strong>
-                          </div>
-
-                          <div className="analysis-change-list">
-
-                            {significantChanges
-                              .slice(0, 5)
-                              .map((change, index) => (
-
-                                <div
-                                  className="analysis-change-item"
-                                  key={index}
-                                >
-
-                                  <div>
-                                    <strong>
-                                      {change?.Material_Code ||
-                                        change?.material_code ||
-                                        change?.material ||
-                                        "Material"}
-                                    </strong>
-
-                                    <span>
-                                      {change?.Material_Name ||
-                                        change?.material_name ||
-                                        change?.name ||
-                                        "Inventory change detected"}
-                                    </span>
-                                  </div>
-
-                                  <strong>
-                                    {change?.change_percent !==
-                                      undefined &&
-                                      change?.change_percent !== null
-                                      ? `${Number(
-                                        change.change_percent
-                                      ).toFixed(1)}%`
-                                      : change?.percentage_change !==
-                                        undefined &&
-                                        change?.percentage_change !== null
-                                        ? `${Number(
-                                          change.percentage_change
-                                        ).toFixed(1)}%`
-                                        : change?.Quantity_Change !==
-                                          undefined
-                                          ? Number(
-                                            change.Quantity_Change
-                                          ).toLocaleString()
-                                          : change?.quantity_change !==
-                                            undefined
-                                            ? Number(
-                                              change.quantity_change
-                                            ).toLocaleString()
-                                            : "Change detected"}
-                                  </strong>
 
                                 </div>
 
-                              ))}
-
-                          </div>
+                              )
+                            )}
 
                         </div>
 
-                      )}
+                      </div>
+
+                    )}
 
                   </div>
+
                 )}
 
-                {/* =========================================================
-                    RI / CAPITAL CLASSIFICATION
-                ========================================================= */}
+
+                {/* CLASSIFICATION */}
 
                 {classificationResult && (
-                  <div className="results-panel classification-panel">
+
+                  <div className="results-panel">
+
                     <div className="panel-header">
+
                       <div>
+
                         <p className="panel-kicker">
                           MATERIAL CLASSIFICATION
                         </p>
@@ -2208,458 +2877,860 @@ function App() {
                           RI / Capital Classification
                         </h3>
 
-                        <span className="results-count">
-                          Deterministic classification using exact material-code
-                          reference matching
-                        </span>
                       </div>
 
-                      <ShieldCheck size={28} />
-                    </div>
-
-                    {!classificationReferencesAvailable && (
-                      <div className="result-warning classification-warning">
-                        <CircleAlert size={22} />
-
-                        <div>
-                          <strong>
-                            RI / Capital reference files are not available.
-                          </strong>
-
-                          <span>
-                            Materials are shown as UNCLASSIFIED rather than
-                            being guessed or automatically assigned.
-                          </span>
-                        </div>
-                      </div>
-                    )}
-
-                    {classificationReferencesAvailable &&
-                      classificationWarnings.length > 0 && (
-                        <div className="result-warning classification-warning">
-                          <CircleAlert size={22} />
-
-                          <div>
-                            <strong>Classification warnings</strong>
-
-                            <span>
-                              {classificationWarnings
-                                .slice(0, 3)
-                                .map((warning, index) => (
-                                  <span key={index}>
-                                    {typeof warning === "string"
-                                      ? warning
-                                      : warning?.message ||
-                                        JSON.stringify(warning)}
-                                    {index <
-                                    Math.min(
-                                      classificationWarnings.length,
-                                      3
-                                    ) -
-                                      1
-                                      ? " "
-                                      : ""}
-                                  </span>
-                                ))}
-                            </span>
-                          </div>
-                        </div>
-                      )}
-
-                    <div className="stats-grid classification-stats">
-                      <StatCard
-                        title="RI Materials"
-                        value={classificationCounts.ri}
-                        icon={<ShieldCheck size={20} />}
-                      />
-
-                      <StatCard
-                        title="Capital Materials"
-                        value={classificationCounts.capital}
-                        icon={<BarChart3 size={20} />}
-                      />
-
-                      <StatCard
-                        title="Normal Materials"
-                        value={classificationCounts.normal}
-                        icon={<CheckCircle2 size={20} />}
-                      />
-
-                      <StatCard
-                        title="Unclassified"
-                        value={classificationCounts.unclassified}
-                        icon={<CircleAlert size={20} />}
-                      />
-                    </div>
-
-                    {classificationRows.length > 0 && (
-                      <div className="table-wrapper classification-table-wrapper">
-                        <table className="inventory-table classification-table">
-                          <thead>
-                            <tr>
-                              <th>Material</th>
-                              <th>Material Name</th>
-                              <th>Inventory Type</th>
-                              <th>Classification Reason</th>
-                            </tr>
-                          </thead>
-
-                          <tbody>
-                            {classificationRows.map((row) => {
-                              const type =
-                                String(row.inventoryType).toUpperCase();
-
-                              const typeClass =
-                                type === "RI"
-                                  ? "ri"
-                                  : type === "CAPITAL"
-                                    ? "capital"
-                                    : type === "NORMAL"
-                                      ? "normal"
-                                      : "unclassified";
-
-                              return (
-                                <tr key={row.id}>
-                                  <td>
-                                    <strong className="material-code">
-                                      {row.materialCode}
-                                    </strong>
-                                  </td>
-
-                                  <td>
-                                    <span className="material-name">
-                                      {row.materialName}
-                                    </span>
-                                  </td>
-
-                                  <td>
-                                    <span
-                                      className={`status-badge classification-badge ${typeClass}`}
-                                    >
-                                      {type}
-                                    </span>
-                                  </td>
-
-                                  <td>
-                                    {row.classificationReason}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* INTERACTIVE COMPARISON TABLE */}
-
-                <div className="results-table-panel">
-                    <div className="results-table-header">
-                      <div>
-                        <p className="panel-kicker">MATERIAL ANALYSIS</p>
-                        <h3>Inventory Changes</h3>
-                        <span className="results-count">
-                          Showing {displayedRows.length} of {normalizedRows.length} materials
-                        </span>
-                      </div>
-
-                      <div className="table-controls">
-                        <div className="search-box">
-                          <Search size={17} />
-                          <input
-                            type="text"
-                            placeholder="Search material, name or plant..."
-                            value={resultSearch}
-                            onChange={(event) => setResultSearch(event.target.value)}
-                          />
-                        </div>
-
-                        <div className="filter-box">
-                          <Filter size={16} />
-                          <select
-                            value={resultFilter}
-                            onChange={(event) => setResultFilter(event.target.value)}
-                          >
-                            <option value="All">All Status</option>
-                            <option value="New">New</option>
-                            <option value="Existing">Existing</option>
-                            <option value="Removed">Removed</option>
-                          </select>
-                        </div>
-
-                        <div className="filter-box">
-                          <ArrowUpDown size={16} />
-                          <select
-                            value={resultSort}
-                            onChange={(event) => setResultSort(event.target.value)}
-                          >
-                            <option value="none">Default Order</option>
-                            <option value="material">Material Code</option>
-                            <option value="quantity-desc">Quantity Change ↓</option>
-                            <option value="quantity-asc">Quantity Change ↑</option>
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-
-                    {displayedRows.length === 0 ? (
-                      <div className="table-empty">
-                        <Search size={32} />
-                        <h4>No materials found</h4>
-                        <p>Try changing your search or status filter.</p>
-                      </div>
-                    ) : (
-                      <div className="table-wrapper">
-                        <table className="inventory-table">
-                          <thead>
-                            <tr>
-                              <th>Material</th>
-                              <th>Material Name</th>
-                              <th>Previous Qty</th>
-                              <th>Current Qty</th>
-                              <th>Change</th>
-                              <th>Unit</th>
-                              <th>Plant</th>
-                              <th>Status</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {displayedRows.map((row) => {
-                              const change = row.quantityChange;
-                              const status = String(row.status).toLowerCase();
-                              return (
-                                <tr key={row.id}>
-                                  <td><strong className="material-code">{row.materialCode}</strong></td>
-                                  <td><span className="material-name">{row.materialName}</span></td>
-                                  <td>{row.previousQuantity.toLocaleString()}</td>
-                                  <td>{row.currentQuantity.toLocaleString()}</td>
-                                  <td>
-                                    <span className={change > 0 ? "quantity-change positive" : change < 0 ? "quantity-change negative" : "quantity-change neutral"}>
-                                      {change > 0 ? "+" : ""}{change.toLocaleString()}
-                                    </span>
-                                  </td>
-                                  <td>{row.unit}</td>
-                                  <td>{row.plant}</td>
-                                  <td><span className={`status-badge ${status}`}>{row.status}</span></td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                </div>
-
-                {/* RESULT PANEL */}
-
-                <div className="results-panel">
-
-
-                    <div className="panel-header">
-
-                      <div>
-
-                        <p className="panel-kicker">
-                          STATUS
-                        </p>
-
-
-                        <h3>
-
-                          {workflowStatus ===
-                            "completed"
-                            ? "Workflow Completed"
-                            : "Workflow Result"}
-
-                        </h3>
-
-                      </div>
-
-
-                      <CheckCircle2
+                      <ShieldCheck
                         size={28}
                       />
 
                     </div>
 
 
-                    <div className={
-                      workflowStatus === "completed"
-                        ? "result-success"
-                        : "result-warning"
-                    }>
+                    <div className="stats-grid">
 
-                      {workflowStatus === "completed" ? (
-                        <CheckCircle2 size={24} />
-                      ) : (
-                        <CircleAlert size={24} />
-                      )}
+                      <StatCard
+                        title="RI Materials"
+                        value={
+                          classificationCounts.ri
+                        }
+                        icon={
+                          <ShieldCheck
+                            size={20}
+                          />
+                        }
+                      />
 
-                      <div>
 
-                        <strong>
-                          {workflowStatus === "completed"
-                            ? "Inventory report generated and validated successfully."
-                            : "Inventory workflow did not complete successfully."}
-                        </strong>
+                      <StatCard
+                        title="Capital Materials"
+                        value={
+                          classificationCounts.capital
+                        }
+                        icon={
+                          <BarChart3
+                            size={20}
+                          />
+                        }
+                      />
 
-                        <span>
-                          {workflowStatus === "completed"
-                            ? "All workflow stages completed."
-                            : "Check the workflow steps above for the failed stage."}
-                        </span>
+
+                      <StatCard
+                        title="Normal Materials"
+                        value={
+                          classificationCounts.normal
+                        }
+                        icon={
+                          <CheckCircle2
+                            size={20}
+                          />
+                        }
+                      />
+
+
+                      <StatCard
+                        title="Unclassified"
+                        value={
+                          classificationCounts.unclassified
+                        }
+                        icon={
+                          <CircleAlert
+                            size={20}
+                          />
+                        }
+                      />
+
+                    </div>
+
+
+                    {classificationRows.length >
+                      0 && (
+
+                      <div className="table-wrapper">
+
+                        <table className="inventory-table">
+
+                          <thead>
+
+                            <tr>
+                              <th>
+                                Material
+                              </th>
+
+                              <th>
+                                Material Name
+                              </th>
+
+                              <th>
+                                Inventory Type
+                              </th>
+
+                              <th>
+                                Reason
+                              </th>
+                            </tr>
+
+                          </thead>
+
+
+                          <tbody>
+
+                            {classificationRows.map(
+                              (row) => {
+
+                                const type =
+                                  String(
+                                    row.inventoryType
+                                  ).toUpperCase();
+
+
+                                const typeClass =
+                                  type === "RI"
+                                    ? "ri"
+                                    : type ===
+                                        "CAPITAL"
+                                      ? "capital"
+                                      : type ===
+                                          "NORMAL"
+                                        ? "normal"
+                                        : "unclassified";
+
+
+                                return (
+
+                                  <tr
+                                    key={
+                                      row.id
+                                    }
+                                  >
+
+                                    <td>
+                                      <strong className="material-code">
+                                        {
+                                          row.materialCode
+                                        }
+                                      </strong>
+                                    </td>
+
+                                    <td>
+                                      {
+                                        row.materialName
+                                      }
+                                    </td>
+
+                                    <td>
+                                      <span
+                                        className={`status-badge classification-badge ${typeClass}`}
+                                      >
+                                        {type}
+                                      </span>
+                                    </td>
+
+                                    <td>
+                                      {
+                                        row.classificationReason
+                                      }
+                                    </td>
+
+                                  </tr>
+
+                                );
+                              }
+                            )}
+
+                          </tbody>
+
+                        </table>
+
+                      </div>
+
+                    )}
+
+                  </div>
+
+                )}
+
+
+                {/* COMPARISON TABLE */}
+
+                <div className="results-table-panel">
+
+                  <div className="results-table-header">
+
+                    <div>
+
+                      <p className="panel-kicker">
+                        MATERIAL ANALYSIS
+                      </p>
+
+                      <h3>
+                        Inventory Changes
+                      </h3>
+
+                      <span className="results-count">
+                        Showing{" "}
+                        {
+                          displayedRows.length
+                        }{" "}
+                        of{" "}
+                        {
+                          normalizedRows.length
+                        }{" "}
+                        materials
+                      </span>
+
+                    </div>
+
+
+                    <div className="table-controls">
+
+                      <div className="search-box">
+
+                        <Search
+                          size={17}
+                        />
+
+                        <input
+                          type="text"
+                          placeholder="Search material, name or plant..."
+                          value={
+                            resultSearch
+                          }
+                          onChange={(event) =>
+                            setResultSearch(
+                              event.target.value
+                            )
+                          }
+                        />
+
+                      </div>
+
+
+                      <div className="filter-box">
+
+                        <Filter
+                          size={16}
+                        />
+
+                        <select
+                          value={
+                            resultFilter
+                          }
+                          onChange={(event) =>
+                            setResultFilter(
+                              event.target.value
+                            )
+                          }
+                        >
+
+                          <option value="All">
+                            All Status
+                          </option>
+
+                          <option value="New">
+                            New
+                          </option>
+
+                          <option value="Existing">
+                            Existing
+                          </option>
+
+                          <option value="Removed">
+                            Removed
+                          </option>
+
+                        </select>
+
+                      </div>
+
+
+                      <div className="filter-box">
+
+                        <ArrowUpDown
+                          size={16}
+                        />
+
+                        <select
+                          value={
+                            resultSort
+                          }
+                          onChange={(event) =>
+                            setResultSort(
+                              event.target.value
+                            )
+                          }
+                        >
+
+                          <option value="none">
+                            Default Order
+                          </option>
+
+                          <option value="material">
+                            Material Code
+                          </option>
+
+                          <option value="quantity-desc">
+                            Quantity Change ↓
+                          </option>
+
+                          <option value="quantity-asc">
+                            Quantity Change ↑
+                          </option>
+
+                        </select>
 
                       </div>
 
                     </div>
 
+                  </div>
+
+
+                  {displayedRows.length ===
+                  0 ? (
+
+                    <div className="table-empty">
+
+                      <Search
+                        size={32}
+                      />
+
+                      <h4>
+                        No materials found
+                      </h4>
+
+                      <p>
+                        Try changing your
+                        search or filter.
+                      </p>
+
+                    </div>
+
+                  ) : (
+
+                    <div className="table-wrapper">
+
+                      <table className="inventory-table">
+
+                        <thead>
+
+                          <tr>
+                            <th>
+                              Material
+                            </th>
+
+                            <th>
+                              Material Name
+                            </th>
+
+                            <th>
+                              Previous Qty
+                            </th>
+
+                            <th>
+                              Current Qty
+                            </th>
+
+                            <th>
+                              Change
+                            </th>
+
+                            <th>
+                              Unit
+                            </th>
+
+                            <th>
+                              Plant
+                            </th>
+
+                            <th>
+                              Status
+                            </th>
+                          </tr>
+
+                        </thead>
+
+
+                        <tbody>
+
+                          {displayedRows.map(
+                            (row) => {
+
+                              const change =
+                                row.quantityChange;
+
+
+                              const status =
+                                String(
+                                  row.status
+                                ).toLowerCase();
+
+
+                              return (
+
+                                <tr
+                                  key={
+                                    row.id
+                                  }
+                                >
+
+                                  <td>
+                                    <strong className="material-code">
+                                      {
+                                        row.materialCode
+                                      }
+                                    </strong>
+                                  </td>
+
+
+                                  <td>
+                                    <span className="material-name">
+                                      {
+                                        row.materialName
+                                      }
+                                    </span>
+                                  </td>
+
+
+                                  <td>
+                                    {
+                                      formatNumber(
+                                        row.previousQuantity
+                                      )
+                                    }
+                                  </td>
+
+
+                                  <td>
+                                    {
+                                      formatNumber(
+                                        row.currentQuantity
+                                      )
+                                    }
+                                  </td>
+
+
+                                  <td>
+
+                                    <span
+                                      className={
+                                        change >
+                                        0
+                                          ? "quantity-change positive"
+                                          : change <
+                                              0
+                                            ? "quantity-change negative"
+                                            : "quantity-change neutral"
+                                      }
+                                    >
+                                      {change >
+                                      0
+                                        ? "+"
+                                        : ""}
+                                      {
+                                        formatNumber(
+                                          change
+                                        )
+                                      }
+                                    </span>
+
+                                  </td>
+
+
+                                  <td>
+                                    {
+                                      row.unit
+                                    }
+                                  </td>
+
+
+                                  <td>
+                                    {
+                                      row.plant
+                                    }
+                                  </td>
+
+
+                                  <td>
+
+                                    <span
+                                      className={`status-badge ${status}`}
+                                    >
+                                      {
+                                        row.status
+                                      }
+                                    </span>
+
+                                  </td>
+
+                                </tr>
+
+                              );
+                            }
+                          )}
+
+                        </tbody>
+
+                      </table>
+
+                    </div>
+
+                  )}
+
+                </div>
+
+
+                {/* FINAL STATUS */}
+
+                <div className="results-panel">
+
+                  <div className="panel-header">
+
+                    <div>
+
+                      <p className="panel-kicker">
+                        FINAL STATUS
+                      </p>
+
+                      <h3>
+                        {[
+                          "completed",
+                          "complete",
+                          "success",
+                        ].includes(
+                          workflowStatus
+                        )
+                          ? "Workflow Completed"
+                          : "Workflow Result"}
+                      </h3>
+
+                    </div>
+
+                    <CheckCircle2
+                      size={28}
+                    />
+
+                  </div>
+
+
+                  <div
+                    className={
+                      [
+                        "completed",
+                        "complete",
+                        "success",
+                      ].includes(
+                        workflowStatus
+                      )
+                        ? "result-success"
+                        : "result-warning"
+                    }
+                  >
+
+                    {[
+                      "completed",
+                      "complete",
+                      "success",
+                    ].includes(
+                      workflowStatus
+                    ) ? (
+                      <CheckCircle2
+                        size={24}
+                      />
+                    ) : (
+                      <CircleAlert
+                        size={24}
+                      />
+                    )}
+
+
+                    <div>
+
+                      <strong>
+                        {[
+                          "completed",
+                          "complete",
+                          "success",
+                        ].includes(
+                          workflowStatus
+                        )
+                          ? "Inventory report generated successfully."
+                          : "Inventory workflow has not completed successfully."}
+                      </strong>
+
+                      <span>
+                        {runId
+                          ? `Run ID: ${runId}`
+                          : "No run ID available."}
+                      </span>
+
+                    </div>
+
+                  </div>
+
+
+                  <div className="download-actions">
 
                     <button
                       className="primary-button"
-                      onClick={downloadReport}
+                      onClick={() =>
+                        downloadBspFile(
+                          "BSP_Inventory.xlsx"
+                        )
+                      }
+                      disabled={
+                        !runId
+                      }
                     >
 
-                      <Download size={19} />
+                      <Download
+                        size={19}
+                      />
 
-                      Download BSP Inventory Report
+                      Download BSP Inventory
+
+                    </button>
+
+
+                    <button
+                      className="secondary-button"
+                      onClick={() =>
+                        downloadBspFile(
+                          "Inventory PO.xlsx"
+                        )
+                      }
+                      disabled={
+                        !runId
+                      }
+                    >
+
+                      <Download
+                        size={19}
+                      />
+
+                      Download Inventory PO
 
                     </button>
 
                   </div>
 
-
-                  {/* EXECUTION DETAILS */}
-
-                  <div className="panel">
-
-                    <div className="panel-header">
-
-                      <div>
-
-                        <p className="panel-kicker">
-                          EXECUTION DETAILS
-                        </p>
+                </div>
 
 
-                        <h3>
-                          Workflow Steps
-                        </h3>
+                {/* EXECUTION DETAILS */}
 
-                      </div>
+                <div className="panel">
+
+                  <div className="panel-header">
+
+                    <div>
+
+                      <p className="panel-kicker">
+                        EXECUTION DETAILS
+                      </p>
+
+                      <h3>
+                        Workflow Steps
+                      </h3>
 
                     </div>
 
-
-                    <WorkflowList
-                      workflowResult={
-                        workflowResult
-                      }
-                      getStepStatus={
-                        getStepStatus
-                      }
-                    />
-
                   </div>
 
-                </>
+
+                  <WorkflowList
+                    workflowResult={
+                      workflowResult
+                    }
+                    getStepStatus={
+                      getStepStatus
+                    }
+                  />
+
+                </div>
+
+              </>
 
             )}
 
-              </section>
+          </section>
 
         )}
 
 
-            {/* =================================================
+        {/* ==================================================
             SETTINGS
-        ================================================= */}
+        ================================================== */}
 
-            {activePage === "settings" && (
+        {activePage ===
+          "settings" && (
 
-              <section className="page">
+          <section className="page">
 
+            <div className="page-intro">
 
-                <div className="page-intro">
+              <p className="panel-kicker">
+                CONFIGURATION
+              </p>
 
-                  <p className="panel-kicker">
-                    CONFIGURATION
-                  </p>
+              <h2>
+                System Settings
+              </h2>
 
+              <p>
+                Current BSP inventory
+                automation configuration.
+              </p>
 
-                  <h2>
-                    System Settings
-                  </h2>
-
-
-                  <p>
-                    Current BSP inventory automation configuration.
-                  </p>
-
-                </div>
-
-
-                <div className="settings-grid">
+            </div>
 
 
-                  <Setting
-                    label="API Server"
-                    value={API_BASE_URL}
-                  />
+            <div className="settings-grid">
 
+              <Setting
+                label="API Server"
+                value={
+                  API_BASE_URL
+                }
+              />
 
-                  <Setting
-                    label="SAP Transaction"
-                    value="MC.1"
-                  />
+              <Setting
+                label="BSP Endpoint"
+                value="/bsp/run"
+              />
 
+              <Setting
+                label="SAP Transaction"
+                value="MC.1"
+              />
 
-                  <Setting
-                    label="SAP Variant"
-                    value="B002159"
-                  />
+              <Setting
+                label="SAP Variant"
+                value="B002159"
+              />
 
+              <Setting
+                label="Plant"
+                value={
+                  selectedPlant
+                }
+              />
 
-                  <Setting
-                    label="Plant"
-                    value="BSP"
-                  />
+              <Setting
+                label="Execution Mode"
+                value="Offline / Raw Excel"
+              />
 
+            </div>
 
-                  <Setting
-                    label="Previous Inventory"
-                    value="previous_inventory.xlsx"
-                  />
+          </section>
 
+        )}
 
-                  <Setting
-                    label="Current Inventory"
-                    value="current_inventory.xlsx"
-                  />
-
-
-                  <Setting
-                    label="Report"
-                    value="BSP_Inventory_Report.xlsx"
-                  />
-
-                </div>
-
-              </section>
-
-            )}
-
-          </main>
+      </main>
 
     </div>
   );
 }
 
 
-// =========================================================
+// ============================================================
+// FILE UPLOAD BOX
+// ============================================================
+
+function FileUploadBox({
+  label,
+  description,
+  file,
+  disabled,
+  onChange,
+}) {
+
+  return (
+
+    <label
+      className={
+        `inventory-file-box ${
+          file
+            ? "has-file"
+            : ""
+        }`
+      }
+    >
+
+      <div className="inventory-file-icon">
+
+        <FileSpreadsheet
+          size={25}
+        />
+
+      </div>
+
+
+      <div className="inventory-file-content">
+
+        <strong>
+          {label}
+        </strong>
+
+        <span>
+          {description}
+        </span>
+
+
+        {file ? (
+
+          <small
+            title={
+              file.name
+            }
+          >
+            {file.name}
+          </small>
+
+        ) : (
+
+          <small>
+            No file selected
+          </small>
+
+        )}
+
+      </div>
+
+
+      <span className="choose-file-button">
+
+        {file
+          ? "Change File"
+          : "Choose File"}
+
+      </span>
+
+
+      <input
+        type="file"
+        accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+        onChange={(
+          event
+        ) =>
+          onChange(
+            event.target.files?.[0] ||
+            null
+          )
+        }
+        disabled={
+          disabled
+        }
+      />
+
+    </label>
+  );
+}
+
+
+// ============================================================
 // STAT CARD
-// =========================================================
+// ============================================================
 
 function StatCard({
   title,
@@ -2675,13 +3746,11 @@ function StatCard({
         {icon}
       </div>
 
-
       <div>
 
         <span>
           {title}
         </span>
-
 
         <strong>
           {value}
@@ -2694,9 +3763,61 @@ function StatCard({
 }
 
 
-// =========================================================
+// ============================================================
+// HEALTH ROW
+// ============================================================
+
+function HealthRow({
+  title,
+  description,
+  status,
+  icon,
+}) {
+
+  const statusClass =
+    status === "Online" ||
+    status === "Ready"
+      ? "good"
+      : status ===
+          "Checking"
+        ? ""
+        : "bad";
+
+
+  return (
+
+    <div className="health-row">
+
+      <div className="health-icon">
+        {icon}
+      </div>
+
+      <div>
+
+        <strong>
+          {title}
+        </strong>
+
+        <span>
+          {description}
+        </span>
+
+      </div>
+
+      <div
+        className={`health-status ${statusClass}`}
+      >
+        {status}
+      </div>
+
+    </div>
+  );
+}
+
+
+// ============================================================
 // WORKFLOW LIST
-// =========================================================
+// ============================================================
 
 function WorkflowList({
   workflowResult,
@@ -2708,11 +3829,16 @@ function WorkflowList({
     <div className="workflow-list">
 
       {WORKFLOW_STEPS.map(
-        (stepName, index) => {
+        (
+          stepName,
+          index
+        ) => {
 
           const status =
             workflowResult
-              ? getStepStatus(stepName)
+              ? getStepStatus(
+                  stepName
+                )
               : "pending";
 
 
@@ -2720,25 +3846,29 @@ function WorkflowList({
 
             <div
               className="workflow-item"
-              key={stepName}
+              key={
+                stepName
+              }
             >
-
 
               <div className="workflow-number">
 
-                {status === "completed" ? (
+                {status ===
+                "completed" ? (
 
                   <CheckCircle2
                     size={21}
                   />
 
-                ) : status === "failed" ? (
+                ) : status ===
+                  "failed" ? (
 
                   <XCircle
                     size={21}
                   />
 
-                ) : status === "running" ? (
+                ) : status ===
+                  "running" ? (
 
                   <Loader2
                     size={21}
@@ -2760,14 +3890,16 @@ function WorkflowList({
                   {stepName}
                 </strong>
 
-
                 <span>
 
-                  {status === "completed"
+                  {status ===
+                  "completed"
                     ? "Completed successfully"
-                    : status === "running"
+                    : status ===
+                        "running"
                       ? "Currently running"
-                      : status === "failed"
+                      : status ===
+                          "failed"
                         ? "Step failed"
                         : "Waiting"}
 
@@ -2777,19 +3909,14 @@ function WorkflowList({
 
 
               <div
-                className={
-                  `workflow-status ${status}`
-                }
+                className={`workflow-status ${status}`}
               >
-
                 {status}
-
               </div>
 
             </div>
 
           );
-
         }
       )}
 
@@ -2798,9 +3925,9 @@ function WorkflowList({
 }
 
 
-// =========================================================
+// ============================================================
 // SETTING
-// =========================================================
+// ============================================================
 
 function Setting({
   label,
@@ -2815,7 +3942,6 @@ function Setting({
         {label}
       </span>
 
-
       <strong>
         {value}
       </strong>
@@ -2825,8 +3951,8 @@ function Setting({
 }
 
 
-// =========================================================
+// ============================================================
 // EXPORT
-// =========================================================
+// ============================================================
 
 export default App;

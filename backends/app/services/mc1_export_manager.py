@@ -30,6 +30,7 @@ import pandas as pd
 from app.services.bsp_mc1_export import (
     clean_mc1_sheet1,
 )
+
 from app.services.sap_excel_adapter import (
     load_and_adapt_sap_mc1,
 )
@@ -52,11 +53,11 @@ class MC1ExportManager:
     """
 
     RAW_REQUIRED_COLUMNS = {
-        "Material Group",
-        "Material",
-        "Storage location",
-        "Val. stock",
-        "ValStckVal",
+        "material group",
+        "material",
+        "storage location",
+        "val. stock",
+        "valstckval",
     }
 
     def __init__(
@@ -81,16 +82,19 @@ class MC1ExportManager:
         file_path: str | Path,
     ) -> dict:
         """
-        Validate that an MC.1 Excel workbook exists and
-        contains an acceptable MC.1 structure.
+        Validate an MC.1 workbook.
+
+        Production rule:
+        ----------------
+        If Sheet1 contains raw MC.1 data, Sheet1 is authoritative.
+
+        Sheet2 is only used as a fallback when raw Sheet1
+        is not available.
         """
 
-        file_path = Path(
-            file_path
-        )
+        file_path = Path(file_path)
 
         if not file_path.exists():
-
             return {
                 "valid": False,
                 "message": (
@@ -105,7 +109,6 @@ class MC1ExportManager:
             ".xlsm",
             ".xls",
         }:
-
             return {
                 "valid": False,
                 "message": (
@@ -126,51 +129,72 @@ class MC1ExportManager:
                 )
 
                 if not sheet_names:
-
                     return {
                         "valid": False,
                         "message": (
-                            "MC.1 workbook contains no worksheets."
+                            "MC.1 workbook contains "
+                            "no worksheets."
                         ),
                         "file": str(file_path),
                     }
 
-                # Look through sheets for either raw or cleaned
-                # MC.1 structure.
-                for sheet_name in sheet_names:
+                def normalized_columns(
+                    sheet_name: str,
+                ) -> set[str]:
 
-                    df = pd.read_excel(
+                    sample = pd.read_excel(
                         workbook,
                         sheet_name=sheet_name,
                         nrows=5,
                     )
 
-                    columns = {
-                        str(column).strip()
-                        for column in df.columns
+                    return {
+                        str(column)
+                        .strip()
+                        .lower()
+                        for column in sample.columns
                     }
 
-                    # Raw MC.1
+                # =================================================
+                # SHEET1 = SOURCE OF TRUTH
+                # =================================================
+
+                if "Sheet1" in sheet_names:
+
+                    columns = normalized_columns(
+                        "Sheet1"
+                    )
+
                     if (
-                        MC1ExportManager.RAW_REQUIRED_COLUMNS
+                        MC1ExportManager
+                        .RAW_REQUIRED_COLUMNS
                         .issubset(columns)
                     ):
 
                         return {
                             "valid": True,
                             "format": "raw_mc1",
-                            "sheet": sheet_name,
+                            "sheet": "Sheet1",
                             "file": str(file_path),
                             "sheets": sheet_names,
                         }
 
-                    # Cleaned MC.1
-                    cleaned_required = {
-                        "Material Code",
-                        "Material Code Desc",
-                        "Plant",
-                        "UOM",
-                    }
+                # =================================================
+                # FALLBACK TO CLEANED SHEET
+                # =================================================
+
+                cleaned_required = {
+                    "material code",
+                    "material code desc",
+                    "plant",
+                    "uom",
+                }
+
+                for sheet_name in sheet_names:
+
+                    columns = normalized_columns(
+                        sheet_name
+                    )
 
                     if cleaned_required.issubset(
                         columns
@@ -187,8 +211,9 @@ class MC1ExportManager:
                 return {
                     "valid": False,
                     "message": (
-                        "Workbook does not contain a recognized "
-                        "raw or cleaned MC.1 structure."
+                        "Workbook does not contain "
+                        "recognized raw MC.1 data "
+                        "in Sheet1 or a cleaned MC.1 sheet."
                     ),
                     "file": str(file_path),
                     "sheets": sheet_names,
@@ -199,7 +224,8 @@ class MC1ExportManager:
             return {
                 "valid": False,
                 "message": (
-                    f"Unable to inspect MC.1 workbook: {exc}"
+                    f"Unable to inspect MC.1 workbook: "
+                    f"{exc}"
                 ),
                 "file": str(file_path),
             }
@@ -229,7 +255,6 @@ class MC1ExportManager:
             "previous",
             "current",
         }:
-
             raise ValueError(
                 "period must be 'previous' or 'current'."
             )
@@ -249,7 +274,7 @@ class MC1ExportManager:
             )
 
         # -----------------------------------------------------
-        # Load through the already-tested adapter.
+        # Load through the existing SAP Excel adapter.
         # -----------------------------------------------------
 
         standardized = (
@@ -317,7 +342,9 @@ class MC1ExportManager:
         result = {
             "success": True,
             "period": period,
-            "source_file": str(file_path),
+            "source_file": str(
+                file_path
+            ),
             "standardized_file": str(
                 output_file
             ),
@@ -358,8 +385,8 @@ class MC1ExportManager:
         current_file: str | Path,
     ) -> dict:
         """
-        Process both MC.1 exports and return their standardized
-        file paths.
+        Process both MC.1 exports and return their
+        standardized file information.
         """
 
         previous = self.process_export(

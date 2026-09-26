@@ -19,7 +19,9 @@ from app.services.spool_inventory_po_orchestrator import (
     SpoolInventoryPOOrchestrator,
 )
 from app.services.zmat_sm37_orchestrator import ZMATSM37Orchestrator
-
+from app.services.bsp_mc1_export import (
+    standardize_mc1_workbook,
+)
 
 class BSPApplicationService:
     """
@@ -134,10 +136,6 @@ class BSPApplicationService:
 
         try:
 
-            from app.services.bsp_mc1_export import (
-                clean_mc1_workbook
-            )
-
             previous_standardized = (
                 self.run_dir
                 / "MC1_Previous_Standardized.xlsx"
@@ -148,12 +146,12 @@ class BSPApplicationService:
                 / "MC1_Current_Standardized.xlsx"
             )
 
-            clean_mc1_workbook(
+            standardize_mc1_workbook(
                 previous_file,
                 previous_standardized,
             )
 
-            clean_mc1_workbook(
+            standardize_mc1_workbook(
                 current_file,
                 current_standardized,
             )

@@ -266,6 +266,79 @@ def clean_mc1_sheet1(
     return result
 
 
+
+# ============================================================
+# MC.1 WORKSHEET RESOLUTION
+# ============================================================
+
+def _resolve_mc1_sheet(excel_file) -> str:
+    """
+    Resolve the worksheet containing raw MC.1 data.
+
+    The documented SAP export normally uses Sheet1. In practice,
+    Excel/SAP can rename the worksheet, so we prefer Sheet1 but
+    fall back to another worksheet only when it contains the
+    required MC.1 columns.
+
+    Raises:
+        ValueError: if no worksheet contains the required columns.
+    """
+
+    sheet_names = list(excel_file.sheet_names)
+
+    if not sheet_names:
+        raise ValueError(
+            "MC.1 workbook contains no worksheets."
+        )
+
+    # Prefer the documented worksheet name.
+    candidates = []
+    if "Sheet1" in sheet_names:
+        candidates.append("Sheet1")
+
+    # Then inspect all other worksheets.
+    candidates.extend(
+        sheet for sheet in sheet_names
+        if sheet != "Sheet1"
+    )
+
+    worksheet_errors = []
+
+    for sheet_name in candidates:
+        try:
+            candidate_df = pd.read_excel(
+                excel_file,
+                sheet_name=sheet_name,
+            )
+
+            candidate_df.columns = [
+                str(column).strip()
+                for column in candidate_df.columns
+            ]
+
+            try:
+                _require_columns(candidate_df)
+                return sheet_name
+            except ValueError as exc:
+                worksheet_errors.append(
+                    f"{sheet_name}: {exc}"
+                )
+
+        except Exception as exc:
+            worksheet_errors.append(
+                f"{sheet_name}: {exc}"
+            )
+
+    raise ValueError(
+        "Could not find a valid MC.1 worksheet. "
+        f"Available sheets: {sheet_names}. "
+        "Expected columns include: "
+        f"{', '.join(RAW_COLUMNS[:-1])}, "
+        "plus the second Val. stock/UOM column. "
+        f"Worksheet details: {' | '.join(worksheet_errors)}"
+    )
+
+
 # ============================================================
 # LOAD MC.1 SHEET1
 # ============================================================
@@ -273,7 +346,7 @@ def clean_mc1_sheet1(
 def load_mc1_sheet1(
     file_path: str | Path,
 ) -> pd.DataFrame:
-    """Load and clean the Sheet1 data from an MC.1 workbook."""
+    """Load and clean the raw MC.1 data from an Excel workbook."""
 
     file_path = Path(file_path)
 
@@ -287,14 +360,11 @@ def load_mc1_sheet1(
         engine="openpyxl",
     ) as excel_file:
 
-        if "Sheet1" not in excel_file.sheet_names:
-            raise ValueError(
-                "MC.1 workbook must contain Sheet1."
-            )
+        raw_sheet = _resolve_mc1_sheet(excel_file)
 
         df = pd.read_excel(
             excel_file,
-            sheet_name="Sheet1",
+            sheet_name=raw_sheet,
         )
 
     df = df.dropna(
@@ -391,7 +461,7 @@ def standardize_mc1_workbook(
     output_file: str | Path,
 ) -> Path:
     """
-    Convert raw Sheet1 MC.1 data into the internal standardized
+    Convert raw MC.1 data into the internal standardized
     workbook.
 
     Output:
@@ -421,14 +491,11 @@ def standardize_mc1_workbook(
         engine="openpyxl",
     ) as excel_file:
 
-        if "Sheet1" not in excel_file.sheet_names:
-            raise ValueError(
-                "MC.1 workbook must contain Sheet1."
-            )
+        raw_sheet = _resolve_mc1_sheet(excel_file)
 
         raw_df = pd.read_excel(
             excel_file,
-            sheet_name="Sheet1",
+            sheet_name=raw_sheet,
         )
 
     # --------------------------------------------------------
@@ -620,21 +687,12 @@ class MC1ExportManager:
                 engine="openpyxl",
             ) as excel_file:
 
-                # Sheet1 required.
-                if "Sheet1" not in excel_file.sheet_names:
-
-                    return {
-                        "valid": False,
-                        "file": str(file_path),
-                        "error": (
-                            "MC.1 workbook must contain "
-                            "Sheet1."
-                        ),
-                    }
+                # Resolve the raw MC.1 worksheet.
+                raw_sheet = _resolve_mc1_sheet(excel_file)
 
                 df = pd.read_excel(
                     excel_file,
-                    sheet_name="Sheet1",
+                    sheet_name=raw_sheet,
                 )
 
             # Normalize columns.
@@ -649,6 +707,7 @@ class MC1ExportManager:
             return {
                 "valid": True,
                 "file": str(file_path),
+                "sheet": raw_sheet,
                 "rows": int(len(df)),
                 "columns": list(df.columns),
             }

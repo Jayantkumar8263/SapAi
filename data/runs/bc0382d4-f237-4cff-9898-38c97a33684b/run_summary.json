@@ -1,0 +1,22 @@
+{
+  "success": true,
+  "mode": "offline",
+  "run_id": "bc0382d4-f237-4cff-9898-38c97a33684b",
+  "files": {
+    "previous_raw": "C:\\Jayant\\College files\\College\\Study Material\\semester\\7thSem\\BSP-training\\SapAi\\data\\runs\\bc0382d4-f237-4cff-9898-38c97a33684b\\input\\previous_inventory.xlsx",
+    "current_raw": "C:\\Jayant\\College files\\College\\Study Material\\semester\\7thSem\\BSP-training\\SapAi\\data\\runs\\bc0382d4-f237-4cff-9898-38c97a33684b\\input\\current_inventory.xlsx",
+    "previous_standardized": "C:\\Jayant\\College files\\College\\Study Material\\semester\\7thSem\\BSP-training\\SapAi\\data\\runs\\bc0382d4-f237-4cff-9898-38c97a33684b\\MC1_Previous_Standardized.xlsx",
+    "current_standardized": "C:\\Jayant\\College files\\College\\Study Material\\semester\\7thSem\\BSP-training\\SapAi\\data\\runs\\bc0382d4-f237-4cff-9898-38c97a33684b\\MC1_Current_Standardized.xlsx",
+    "bsp_workbook": "C:\\Jayant\\College files\\College\\Study Material\\semester\\7thSem\\BSP-training\\SapAi\\data\\runs\\bc0382d4-f237-4cff-9898-38c97a33684b\\BSP_Inventory.xlsx",
+    "database": "C:\\Jayant\\College files\\College\\Study Material\\semester\\7thSem\\BSP-training\\SapAi\\data\\runs\\bc0382d4-f237-4cff-9898-38c97a33684b\\inventory.db",
+    "inventory_spool": "C:\\Jayant\\College files\\College\\Study Material\\semester\\7thSem\\BSP-training\\SapAi\\data\\runs\\bc0382d4-f237-4cff-9898-38c97a33684b\\Inventory_Spool.txt",
+    "inventory_po": "C:\\Jayant\\College files\\College\\Study Material\\semester\\7thSem\\BSP-training\\SapAi\\data\\runs\\bc0382d4-f237-4cff-9898-38c97a33684b\\Inventory PO.xlsx"
+  },
+  "metrics": {
+    "mminv_new_rows": 13,
+    "unique_material_codes": 13,
+    "zmat_batches": 1,
+    "inventory_po_rows": null,
+    "mminv1_new_rows": 13
+  }
+}

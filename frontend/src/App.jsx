@@ -133,11 +133,7 @@ function App() {
   // BACKEND
   // ==========================================================
 
-  const [backendStatus, setBackendStatus] =
-    useState("checking");
-
-  const [backendError, setBackendError] =
-    useState("");
+  const [backendStatus, setBackendStatus] = useState("checking");
 
 
   // ==========================================================
@@ -241,7 +237,6 @@ function App() {
   const checkBackend = async () => {
 
     setBackendStatus("checking");
-    setBackendError("");
 
     try {
 
@@ -273,10 +268,6 @@ function App() {
       );
 
       setBackendStatus("offline");
-
-      setBackendError(
-        getErrorMessage(err)
-      );
     }
   };
 
@@ -287,18 +278,21 @@ function App() {
 
   useEffect(() => {
 
+  const initialCheck = setTimeout(() => {
     checkBackend();
+  }, 0);
 
-    const interval = setInterval(
-      checkBackend,
-      10000
-    );
+  const interval = setInterval(
+    checkBackend,
+    10000
+  );
 
-    return () => {
-      clearInterval(interval);
-    };
+  return () => {
+    clearTimeout(initialCheck);
+    clearInterval(interval);
+  };
 
-  }, []);
+}, []);
 
 
   // ==========================================================

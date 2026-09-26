@@ -155,7 +155,7 @@
             "success": true,
             "status": "FINISHED",
             "job_number": "DEMO-0001",
-            "elapsed_seconds": 4.499997885432094e-06,
+            "elapsed_seconds": 6.000002031214535e-06,
             "status_history": [
               "FINISHED"
             ]
